@@ -15,7 +15,10 @@
 #define LED0_NODE DT_ALIAS(led0)
 
 
-///TODO frame parsing, status returns, and the 150 ms fail-safe timer
+/* TODO script sending command frames every <= 50 ms, 
+listening for status frames every 20 ms, and forwarding UDP wheel data
+*/
+
 /*
  * A build error on this line means your board is unsupported.
  * See the sample documentation for information on how to fix this.
