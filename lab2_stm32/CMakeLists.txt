@@ -10,6 +10,7 @@ target_sources(app PRIVATE
 	src/motor.c
 	src/sense.c
 	src/status.c
+	src/state.c
 )
 
 target_include_directories(app PRIVATE include)

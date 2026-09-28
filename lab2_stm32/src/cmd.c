@@ -21,10 +21,10 @@ static void cmd_thread(void *p1, void *p2, void *p3)
 		link_recv(&f, K_FOREVER); 
 
 		if (!frame_valid(&f)) {
-			state_fail(R_BAD_CMD);
+			enter_error(R_MALFORMED_MSG);
 			continue;
 		}
-		state_frame_ok();  
+		enter_normal();  
 
 		switch (f.id) {
 		case ID_BRAKE:   drivetrain_set_brake(f.d[1]);       break;

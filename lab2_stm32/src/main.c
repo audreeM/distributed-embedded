@@ -1,10 +1,12 @@
-#include <zephyr/drivers/gpio.h>
 #include "config.h"
+#include "state.h"
+#include "link.h"
 
 int main(void)
 {
 	// TODO: state_init() - drive outputs to the safe state and enter ERROR
 	// before any thread is allowed to touch an actuator
+	state_init();
 
 	// wakes up when a frame arrives, serves brake, throttle, servo, and button presses
 	k_thread_start(cmd_tid);

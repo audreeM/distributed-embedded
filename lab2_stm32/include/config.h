@@ -2,6 +2,7 @@
 #define CONFIG_H
 
 #include <zephyr/kernel.h>
+#include <zephyr/drivers/gpio.h>
 #define STACK_SZ 1024
 
 // TODO: check these values
