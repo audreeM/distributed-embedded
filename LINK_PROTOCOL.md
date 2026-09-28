@@ -6,8 +6,8 @@ Source of truth: [common/link_proto.h](common/link_proto.h). Both sides include 
 
 | Signal | Raspberry Pi | STM32 Nucleo-F401RE |
 |---|---|---|
-| Pi → STM32 (commands) | pin 8, GPIO14 TXD | PB7, USART1_RX (CN7-21) |
-| STM32 → Pi (status) | pin 10, GPIO15 RXD | PB6, USART1_TX (D10) |
+| Pi → STM32 (commands) | pin 8, GPIO14 TXD | PA12, USART6_RX (CN10-12) |
+| STM32 → Pi (status) | pin 10, GPIO15 RXD | PA11, USART6_TX (CN10-14) |
 | Ground | pin 6 | GND |
 
 (pins might change!! upddate if needed)

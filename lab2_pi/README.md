@@ -39,8 +39,8 @@ Keys (type, then press Enter): `b` sends out-of-range throttle for 1 s (checkoff
 
 | Pi header | Use |
 |---|---|
-| 8 (GPIO14 TXD) | → STM32 PB7 |
-| 10 (GPIO15 RXD) | ← STM32 PB6 |
+| 8 (GPIO14 TXD) | → STM32 PA12 (USART6_RX, CN10-12) |
+| 10 (GPIO15 RXD) | ← STM32 PA11 (USART6_TX, CN10-14) |
 | 6 (GND) | STM32 GND |
 | 16 (GPIO23) | UDP_RX test point |
 | 18 (GPIO24) | CMD_TX test point |

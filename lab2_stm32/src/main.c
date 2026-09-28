@@ -47,7 +47,7 @@ int main(void)
 		printk("link_init failed: %d\n", ret);
 		return 0;
 	}
-	printk("lab2_stm32: link on USART1 (PB6 TX / PB7 RX), timeout %d ms\n",
+	printk("lab2_stm32: link on USART6 (PA11 TX / PA12 RX), timeout %d ms\n",
 	       LINK_TIMEOUT_MS);
 
 	uint32_t prev_faults = UINT32_MAX;

@@ -1,12 +1,15 @@
 /*
- * Pi <-> STM32 link on USART1: PB6 = TX (D10) -> Pi pin 10 (GPIO15 RXD),
- * PB7 = RX (CN7-21) <- Pi pin 8 (GPIO14 TXD). USART2 (PA2/PA3) is left for
- * the ST-Link USB console.
+ * Pi <-> STM32 link on USART6:
+ *   PA11 = USART6_TX (CN10-14) -> Pi pin 10 (GPIO15 RXD)
+ *   PA12 = USART6_RX (CN10-12) <- Pi pin 8  (GPIO14 TXD)
+ * PA11/PA12 are the MCU's USB pins, unused on the Nucleo, so they don't clash
+ * with the motor/servo PWM pins. USART2 (PA2/PA3) stays the ST-Link USB
+ * console for printk.
  * CMD_RX test point on PC8 (CN10-2).
  */
 / {
 	aliases {
-		link-uart = &usart1;
+		link-uart = &usart6;
 	};
 
 	zephyr,user {
@@ -14,9 +17,16 @@
 	};
 };
 
-&usart1 {
-	pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
+&usart6 {
+	pinctrl-0 = <&usart6_tx_pa11 &usart6_rx_pa12>;
 	pinctrl-names = "default";
 	current-speed = <115200>;
 	status = "okay";
+};
+
+/* The board file enables USART1 on PB6/PB7 by default. Turn it off so those
+ * pins are free for PWM (TIM4_CH1/CH2).
+ */
+&usart1 {
+	status = "disabled";
 };

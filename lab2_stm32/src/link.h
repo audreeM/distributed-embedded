@@ -1,5 +1,5 @@
 /*
- * Pi -> STM32 command link and STM32 -> Pi status heartbeat (USART1).
+ * Pi -> STM32 command link and STM32 -> Pi status heartbeat (USART6).
  *
  * Usage from the rest of the app:
  *   - link_get_cmd()      latest accepted command, any thread, never blocks
