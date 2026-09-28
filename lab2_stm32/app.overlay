@@ -1,0 +1,22 @@
+/*
+ * Pi <-> STM32 link on USART1: PB6 = TX (D10) -> Pi pin 10 (GPIO15 RXD),
+ * PB7 = RX (CN7-21) <- Pi pin 8 (GPIO14 TXD). USART2 (PA2/PA3) is left for
+ * the ST-Link USB console.
+ * CMD_RX test point on PC8 (CN10-2).
+ */
+/ {
+	aliases {
+		link-uart = &usart1;
+	};
+
+	zephyr,user {
+		cmdrx-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&usart1 {
+	pinctrl-0 = <&usart1_tx_pb6 &usart1_rx_pb7>;
+	pinctrl-names = "default";
+	current-speed = <115200>;
+	status = "okay";
+};

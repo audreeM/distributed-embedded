@@ -1,50 +1,91 @@
 /*
- * Copyright (c) 2016 Intel Corporation
+ * Lab 2 STM32 zone.
  *
- * SPDX-License-Identifier: Apache-2.0
+ * Part 2 (link.c, sys_state.c) is complete. The loop below is a placeholder
+ * that prints the link state for the Part 2 checkpoint and shows the fault
+ * state on LD2; Part 3 actuator code replaces or extends it.
+ *
+ * Contract for Part 3 code:
+ *   - sys_state_is_error() true  -> motor PWM off + dynamic brake, hazards 2 Hz
+ *   - otherwise use link_get_cmd() (throttle/brake 0..100, steer -100..100)
+ *   - brake > 0 wins over throttle
+ *   - report currents with link_set_currents()
  */
 
-#include <stdio.h>
-#include <zephyr/kernel.h>
 #include <zephyr/drivers/gpio.h>
+#include <zephyr/kernel.h>
+#include <zephyr/sys/printk.h>
 
-/* 1000 msec = 1 sec */
-#define SLEEP_TIME_MS   1000
+#include "link.h"
+#include "sys_state.h"
 
-/* The devicetree node identifier for the "led0" alias. */
-#define LED0_NODE DT_ALIAS(led0)
+#define PRINT_PERIOD_MS 200
+#define LED_ERROR_HALF_MS 125 /* 4 Hz blink on LD2 while in ERROR */
 
+static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(DT_ALIAS(led0), gpios);
 
-///TODO frame parsing, status returns, and the 150 ms fail-safe timer
-/*
- * A build error on this line means your board is unsupported.
- * See the sample documentation for information on how to fix this.
- */
-static const struct gpio_dt_spec led = GPIO_DT_SPEC_GET(LED0_NODE, gpios);
+static void print_faults(uint32_t f)
+{
+	printk("[%6u ms] %s faults=0x%02x%s%s%s%s\n", (uint32_t)k_uptime_get(),
+	       f ? "ERROR " : "NORMAL", f,
+	       (f & LP_FAULT_POWERUP) ? " POWERUP" : "",
+	       (f & LP_FAULT_LINK_LOST) ? " LINK_LOST" : "",
+	       (f & LP_FAULT_BAD_CMD) ? " BAD_CMD" : "",
+	       (f & LP_FAULT_SELF_TEST) ? " SELF_TEST" : "");
+}
 
 int main(void)
 {
 	int ret;
-	bool led_state = true;
 
-	if (!gpio_is_ready_dt(&led)) {
+	if (!gpio_is_ready_dt(&led) || gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE) < 0) {
 		return 0;
 	}
 
-	ret = gpio_pin_configure_dt(&led, GPIO_OUTPUT_ACTIVE);
+	ret = link_init();
 	if (ret < 0) {
+		printk("link_init failed: %d\n", ret);
 		return 0;
 	}
+	printk("lab2_stm32: link on USART1 (PB6 TX / PB7 RX), timeout %d ms\n",
+	       LINK_TIMEOUT_MS);
 
-	while (1) {
-		ret = gpio_pin_toggle_dt(&led);
-		if (ret < 0) {
-			return 0;
+	uint32_t prev_faults = UINT32_MAX;
+	int64_t next_print = 0;
+	int64_t next_led = 0;
+	struct link_cmd c;
+
+	for (;;) {
+		/* Wakes early on a new command or a fault change; the 10 ms
+		 * timeout keeps the LED blinking even with no traffic.
+		 */
+		link_wait(K_MSEC(10));
+
+		int64_t now = k_uptime_get();
+		uint32_t f = sys_state_faults();
+
+		if (f != prev_faults) {
+			print_faults(f);
+			prev_faults = f;
 		}
 
-		led_state = !led_state;
-		printf("LED state: %s\n", led_state ? "ON" : "OFF");
-		k_msleep(SLEEP_TIME_MS);
+		if (now >= next_print) {
+			next_print = now + PRINT_PERIOD_MS;
+			link_get_cmd(&c);
+			if (c.valid) {
+				printk("cmd seq=%3u thr=%3u brk=%3u steer=%+4d btn=0x%02x age=%u ms\n",
+				       c.seq, c.throttle, c.brake, c.steer, c.buttons,
+				       (uint32_t)(now - c.rx_ms));
+			}
+		}
+
+		/* LD2: solid = NORMAL, fast blink = ERROR. */
+		if (!f) {
+			gpio_pin_set_dt(&led, 1);
+		} else if (now >= next_led) {
+			next_led = now + LED_ERROR_HALF_MS;
+			gpio_pin_toggle_dt(&led);
+		}
 	}
 	return 0;
 }
