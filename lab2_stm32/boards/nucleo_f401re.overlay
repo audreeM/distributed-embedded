@@ -1,0 +1,74 @@
+/*
+ * Pin plan for 3.1. SUGGESTED pins - verify in DS10086 / UM1724.
+ *   ENA PA8 [D7]  TIM1_CH1     ENB PA9 [D8]  TIM1_CH2
+ *   IN1 PA10 [D2] IN2 PB5 [D4] IN3 PC7 [D9]  IN4 PB0 [A3]
+ *   Encoder L: PA6 [D12] / PA7 [D11]  TIM3
+ *   Encoder R: PB6 [D10] / PB7 [CN7-21] TIM4
+ */
+#include <zephyr/dt-bindings/pwm/pwm.h>
+#include <zephyr/dt-bindings/sensor/qdec_stm32.h>
+
+/ {
+	aliases {
+		qdec-left = &qdec_left;
+		qdec-right = &qdec_right;
+	};
+
+	zephyr,user {
+		/* 20 kHz motor PWM */
+		pwms = <&motor_pwm 1 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&motor_pwm 2 PWM_USEC(50) PWM_POLARITY_NORMAL>;
+		/* IN1, IN2 (left), IN3, IN4 (right) */
+		motor-dir-gpios = <&gpioa 10 GPIO_ACTIVE_HIGH>,
+				  <&gpiob 5 GPIO_ACTIVE_HIGH>,
+				  <&gpioc 7 GPIO_ACTIVE_HIGH>,
+				  <&gpiob 0 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* The board file puts these on pins we need - turn them off. */
+&usart1 { status = "disabled"; };  /* PB6/PB7 */
+&spi1   { status = "disabled"; };  /* PA5-PA7, PB6 */
+&i2c3   { status = "disabled"; };  /* PA8 */
+
+&timers1 {
+	status = "okay";
+	st,prescaler = <0>;
+	motor_pwm: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim1_ch1_pa8 &tim1_ch2_pa9>;
+		pinctrl-names = "default";
+	};
+};
+
+/* Encoder mode 3 = count every edge of A and B (x4). */
+&timers3 {
+	status = "okay";
+	st,prescaler = <0>;
+	qdec_left: qdec {
+		status = "okay";
+		pinctrl-0 = <&tim3_ch1_pa6 &tim3_ch2_pa7>;
+		pinctrl-names = "default";
+		st,encoder-mode = <0x3>;
+		st,input-filter-level = <FDIV32_N8>;
+		st,counts-per-revolution = <1>;
+	};
+};
+
+&timers4 {
+	status = "okay";
+	st,prescaler = <0>;
+	qdec_right: qdec {
+		status = "okay";
+		pinctrl-0 = <&tim4_ch1_pb6 &tim4_ch2_pb7>;
+		pinctrl-names = "default";
+		st,encoder-mode = <0x3>;
+		st,input-filter-level = <FDIV32_N8>;
+		st,counts-per-revolution = <1>;
+	};
+};
+
+&tim3_ch1_pa6 { bias-pull-up; };
+&tim3_ch2_pa7 { bias-pull-up; };
+&tim4_ch1_pb6 { bias-pull-up; };
+&tim4_ch2_pb7 { bias-pull-up; };
