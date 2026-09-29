@@ -1,8 +1,9 @@
-#ifndef ENCODER_H_
-#define ENCODER_H_
+#ifndef MOTOR_H_
+#define MOTOR_H_
 #include <stdint.h>
 
-int encoder_init(void);
-int32_t encoder_read(int side);   /* 0 = left, 1 = right. Signed total count. */
+int motor_init(void);
+void motor_forward(uint16_t duty);   /* both motors, duty 0..DUTY_MAX */
+void motor_brake(void);              /* both motors, dynamic braking */
 
 #endif
