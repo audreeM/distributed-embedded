@@ -9,8 +9,9 @@ target_sources(app PRIVATE
 	src/cmd.c
 	src/motor.c
 	src/sense.c
-	src/status.c
 	src/state.c
+	src/link.c
+  	src/sys_state.c
 )
 
-target_include_directories(app PRIVATE include)
+target_include_directories(app PRIVATE include ../common)

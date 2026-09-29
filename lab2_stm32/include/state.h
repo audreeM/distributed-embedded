@@ -20,5 +20,5 @@ typedef enum {
 #define R_POWER_UP 0x0B // on start up the system is error state
 
 void state_init(void);
-void enter_error(void);
-void enter_normal(uint8_t reasonUpdated);
+void enter_error(uint8_t reasonUpdated);
+void enter_normal(void);
