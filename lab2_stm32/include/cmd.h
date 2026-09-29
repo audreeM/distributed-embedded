@@ -3,5 +3,6 @@
 
 #include "config.h"
 #include "state.h"
+#include "link.h"
 
 #endif

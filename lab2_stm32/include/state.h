@@ -1,4 +1,5 @@
 #include <stdint.h>
+
 typedef enum { 
 	ST_ERROR = 0, 
 	ST_NORMAL = 1, 
@@ -20,4 +21,4 @@ typedef enum {
 
 void state_init(void);
 void enter_error(void);
-void enter_normal(void);
+void enter_normal(uint8_t reasonUpdated);
