@@ -1,9 +1,11 @@
 /*
  * Task 3.1: throttle -> target wheel velocity, held by a PI controller
  * on the average of the two encoders.
+ * Task 3.2: brake pedal -> dynamic braking. Brake beats throttle, always.
  *
  * Serial console commands (115200 baud):
  *   thr <0..1000>        set throttle (closed loop)
+ *   brake <0|1>          brake pedal released / pressed
  *   open <0..1000>       fixed duty, no control (to measure top speed)
  *   gains <kp> <ki>      change PI gains live
  *   status               print target, velocities, duty, counts
@@ -15,8 +17,9 @@
 #include "encoder.h"
 #include "motor.h"
 
-
+/* Inputs from the shell thread. Plain ints in atomics - no tearing. */
 static atomic_t throttle;          /* 0..THROTTLE_MAX */
+static atomic_t brake;             /* 1 = brake pedal pressed */
 static atomic_t open_duty = ATOMIC_INIT(-1);   /* -1 = closed loop */
 static float kp = KP, ki = KI;
 static struct k_spinlock lock;     /* protects kp, ki and the status below */
@@ -25,6 +28,7 @@ static struct k_spinlock lock;     /* protects kp, ki and the status below */
 static float st_target, st_vel[2], st_avg;
 static int32_t st_counts[2];
 static uint16_t st_duty;
+static bool st_brake;
 
 /* Throttle -> target rpm: straight line, monotonic. */
 static float throttle_to_rpm(int t)
@@ -76,22 +80,30 @@ int main(void)
 
 		k_spin_unlock(&lock, key);
 
-		uint16_t duty;
+		uint16_t duty = 0;
+		bool braking = atomic_get(&brake);
 		int open = atomic_get(&open_duty);
 
-		if (open >= 0) {
-			duty = open;                     /* open loop test */
-			integral = 0.0f;
-		} else if (target <= 0.0f) {
-			duty = 0;                        /* stopped: coast */
-			integral = 0.0f;
+		if (braking) {
+			/* 3.2: checked FIRST, so throttle and open-loop can never
+			 * override it. */
+			motor_brake();
+			integral = 0.0f;               /* don't wind up while stopped */
 		} else {
-			float err = target - avg;
+			if (open >= 0) {
+				duty = open;                   /* open loop test */
+				integral = 0.0f;
+			} else if (target <= 0.0f) {
+				duty = 0;                      /* no throttle: coast */
+				integral = 0.0f;
+			} else {
+				float err = target - avg;
 
-			integral = clampf(integral + i * err * dt, 0.0f, I_LIMIT);
-			duty = (uint16_t)clampf(p * err + integral, 0.0f, DUTY_MAX);
+				integral = clampf(integral + i * err * dt, 0.0f, I_LIMIT);
+				duty = (uint16_t)clampf(p * err + integral, 0.0f, DUTY_MAX);
+			}
+			motor_forward(duty);
 		}
-		motor_forward(duty);
 
 		/* 4. Save status for the `status` command. */
 		key = k_spin_lock(&lock);
@@ -102,6 +114,7 @@ int main(void)
 		st_counts[0] = counts[0];
 		st_counts[1] = counts[1];
 		st_duty = duty;
+		st_brake = braking;
 		k_spin_unlock(&lock, key);
 	}
 }
@@ -118,6 +131,12 @@ static int cmd_thr(const struct shell *sh, size_t argc, char **argv)
 	}
 	atomic_set(&open_duty, -1);
 	atomic_set(&throttle, t);
+	return 0;
+}
+
+static int cmd_brake(const struct shell *sh, size_t argc, char **argv)
+{
+	atomic_set(&brake, atoi(argv[1]) != 0);
 	return 0;
 }
 
@@ -145,21 +164,25 @@ static int cmd_gains(const struct shell *sh, size_t argc, char **argv)
 
 static int cmd_status(const struct shell *sh, size_t argc, char **argv)
 {
+	/* Copy under the lock, print AFTER unlocking (never print while locked). */
 	k_spinlock_key_t key = k_spin_lock(&lock);
 	float target = st_target, vl = st_vel[0], vr = st_vel[1], avg = st_avg;
 	int32_t cl = st_counts[0], cr = st_counts[1];
 	uint16_t duty = st_duty;
+	bool brk = st_brake;
 
 	k_spin_unlock(&lock, key);
 
-	shell_print(sh, "target=%.1f  vL=%.1f  vR=%.1f  avg=%.1f rpm  duty=%u  countL=%d  countR=%d",
-		    (double)target, (double)vl, (double)vr, (double)avg, duty, cl, cr);
+	shell_print(sh, "%s target=%.1f  vL=%.1f  vR=%.1f  avg=%.1f rpm  duty=%u  countL=%d  countR=%d",
+		    brk ? "BRAKE" : "RUN  ", (double)target, (double)vl, (double)vr, (double)avg, duty, cl, cr);
 	return 0;
 }
 
 SHELL_CMD_ARG_REGISTER(thr, NULL, "Throttle 0..1000", cmd_thr, 2, 0);
+SHELL_CMD_ARG_REGISTER(brake, NULL, "Brake pedal 0|1", cmd_brake, 2, 0);
 SHELL_CMD_ARG_REGISTER(open, NULL, "Open-loop duty 0..1000", cmd_open, 2, 0);
 SHELL_CMD_ARG_REGISTER(gains, NULL, "PI gains: <kp> <ki>", cmd_gains, 3, 0);
 SHELL_CMD_ARG_REGISTER(status, NULL, "Print status", cmd_status, 1, 0);
-/* TODO 3.2: brake pedal -> motor_brake(), brake beats throttle */
+
 /* TODO Part 2: get throttle from the Pi link instead of the shell */
+/* TODO Part 2: frame parsing, status returns, and the 150 ms fail-safe timer */
