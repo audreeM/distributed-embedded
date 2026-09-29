@@ -44,6 +44,7 @@ int main(void)
 		return 0;
 	}
 
+	// sests up frame receiving
 	ret = link_init();
 	if (ret < 0) {
 		printk("link_init failed: %d\n", ret);
