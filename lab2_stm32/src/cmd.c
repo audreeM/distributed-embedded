@@ -12,11 +12,9 @@ static void cmd_thread(void *p1, void *p2, void *p3)
 		link_wait(K_FOREVER);
 
 		if (sys_state_is_error()) {
-			enter_error(R_MALFORMED_MSG);
 			continue;
 		}
 		link_get_cmd(&c);
-		enter_normal();  
 
 		// TO DO: read the frame to call other functions
 	}

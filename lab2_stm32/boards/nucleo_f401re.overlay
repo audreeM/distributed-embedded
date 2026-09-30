@@ -151,3 +151,19 @@
 	};
 };
 
+// current sensor
+&adc1 {
+	pinctrl-0 = <&adc1_in0_pa0 &adc1_in4_pa4 &adc1_in11_pc1>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@0  { reg = <0>;  zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL";
+	             zephyr,acquisition-time = <ADC_ACQ_TIME_MAX>; zephyr,resolution = <12>; };
+	channel@4  { reg = <4>;  /* same four properties */ };
+	channel@b  { reg = <11>; /* same four properties */ };
+};
+
+/* inside the existing zephyr,user node: */
+io-channels = <&adc1 0>, <&adc1 4>, <&adc1 11>;

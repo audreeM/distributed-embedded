@@ -2,7 +2,6 @@
 #define CMD_H
 
 #include "config.h"
-#include "state.h"
 #include "link.h"
 #include "sys_state.h"
 
