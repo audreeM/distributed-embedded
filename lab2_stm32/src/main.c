@@ -19,6 +19,7 @@
 #include "state.h"
 #include "link.h"
 #include "sys_state.h"
+#include "cli.h"
 
 #define PRINT_PERIOD_MS 200
 #define LED_ERROR_HALF_MS 125 /* 4 Hz blink on LD2 while in ERROR */
@@ -60,6 +61,9 @@ int main(void)
 	// every 10 ms reads the three current sensors
 	k_thread_start(sense_tid);
 
+	// every 20 ms maps the wheel angle to the steering servo (3.3)
+	k_thread_start(servo_tid);
+
 	printk("lab2_stm32: link on USART6 (PA11 TX / PA12 RX), timeout %d ms\n",
 	       LINK_TIMEOUT_MS);
 
@@ -82,7 +86,8 @@ int main(void)
 			prev_faults = f;
 		}
 
-		if (now >= next_print) {
+		/* Periodic command print only when `log on` (keeps the shell usable). */
+		if (cli_log_enabled() && now >= next_print) {
 			next_print = now + PRINT_PERIOD_MS;
 			link_get_cmd(&c);
 			if (c.valid) {

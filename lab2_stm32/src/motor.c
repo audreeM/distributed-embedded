@@ -17,6 +17,7 @@
 #include "encoder.h"
 #include "link.h"
 #include "sys_state.h"
+#include "cli.h"
 
 static float clampf(float x, float lo, float hi)
 {
@@ -96,7 +97,7 @@ static void motor_thread(void *p1, void *p2, void *p3)
 
 		// TODO: remove later
 		static int n;
-		if (++n % 20 == 0) {   // every 200 ms
+		if (++n % 20 == 0 && cli_log_enabled()) {   // every 200 ms, `log on`
 			printk("tgt=%.1f vL=%.1f vR=%.1f duty=%u\n",
 				(double)target, (double)vel[0], (double)vel[1], duty);
 		}

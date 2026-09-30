@@ -36,6 +36,11 @@ void link_get_cmd(struct link_cmd *out);
 bool link_wait(k_timeout_t timeout);
 void link_set_currents(uint16_t motor_l_ma, uint16_t motor_r_ma, uint16_t servo_ma);
 
+/* TEST ONLY (shell `sim`): push a command through the same checks as a
+ * UART frame - range check, watchdog feed, fault logic. Use only with the
+ * Pi link idle, or the two sources will fight. */
+void link_inject_cmd(uint8_t seq, const struct lp_cmd *cmd);
+
 /* Wakes link_wait(); ISR-safe. Used by sys_state on fault changes. */
 void link_notify(void);
 

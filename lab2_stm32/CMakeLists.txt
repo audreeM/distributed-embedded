@@ -11,6 +11,8 @@ target_sources(app PRIVATE
 	src/link.c
   	src/sys_state.c
 	src/encoder.c
+	src/servo.c
+	src/cli.c
 )
 
 target_include_directories(app PRIVATE include ../common)

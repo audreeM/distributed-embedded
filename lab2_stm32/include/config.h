@@ -10,6 +10,8 @@
 #define PRIO_MOTOR 2
 #define PRIO_STATUS 3
 #define PRIO_SENSE 4
+#define PRIO_SERVO 3   /* 3.3: 50 ms budget */
+#define PRIO_SIM 5     /* test shell: simulated Pi commands */
 
 // thread IDs, each defined (dormant) in the file that owns the thread
 // and started from main() once the safe state is set up
@@ -17,6 +19,7 @@ extern const k_tid_t cmd_tid;
 extern const k_tid_t motor_tid;
 extern const k_tid_t status_tid;
 extern const k_tid_t sense_tid;
+extern const k_tid_t servo_tid;
 
 #define CONTROL_PERIOD_MS   10       
 
@@ -34,5 +37,17 @@ extern const k_tid_t sense_tid;
 #define I_LIMIT             1000.0f  
 
 #define DUTY_MAX            1000     
+
+/* ---- 3.3 steering servo (LD-1501MG: 500..2500 us = 0..180 deg) ----
+ * MEASURE with `servo us <n>`: find the pulse where the linkage just reaches
+ * each end stop, then set MIN/MAX a little INSIDE those so it never buzzes.
+ * The defaults below are deliberately conservative. */
+#define SERVO_PERIOD_MS     20      /* 50 Hz frame, standard for hobby servos */
+#define SERVO_MIN_US        1300    /* MEASURE: full left  (steer = -100) */
+#define SERVO_CENTER_US     1500    /* MEASURE: wheels straight (steer = 0) */
+#define SERVO_MAX_US        1700    /* MEASURE: full right (steer = +100) */
+#define SERVO_INVERT        0       /* 1 if wheel-left turns the car right */
+#define SERVO_ABS_MIN_US    500     /* hard limits for raw calibration */
+#define SERVO_ABS_MAX_US    2500
 
 #endif

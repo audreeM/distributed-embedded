@@ -1,0 +1,5 @@
+west:
+  command: C:\Users\adith\zephyrproject\.venv\Scripts\west build -p always -b nucleo_f401re
+    --force
+  topdir: C:\Users\adith\zephyrproject
+  version: 1.5.0

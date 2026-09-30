@@ -187,6 +187,55 @@ K_TIMER_DEFINE(status_timer, status_tick, NULL);
 /* ------------------------------------------------------------- thread */
 
 /*
+ * Accept one decoded command: range check, feed the watchdog, publish, run
+ * the fault/button logic, wake the control thread. Shared by the UART path
+ * (link_rx thread) and the test shell (link_inject_cmd). The mutex keeps the
+ * two from running sys_state_on_buttons() at the same time.
+ */
+K_MUTEX_DEFINE(accept_mtx);
+
+static void accept_cmd(uint8_t seq, const struct lp_cmd *cmd)
+{
+	k_mutex_lock(&accept_mtx, K_FOREVER);
+
+	if (!lp_cmd_in_range(cmd)) {
+		/* Reject: never stored, never acted on, and it does not
+		 * feed the link watchdog.
+		 */
+		atomic_inc(&range_err);
+		sys_state_on_bad_cmd();
+		k_mutex_unlock(&accept_mtx);
+		return;
+	}
+
+	/* Good command -> push the watchdog deadline out again. */
+	k_timer_start(&link_wd, K_MSEC(LINK_TIMEOUT_MS), K_NO_WAIT);
+
+	/* Publish as one struct under a lock, so a reader never sees
+	 * a new throttle paired with an old brake.
+	 */
+	int64_t now = k_uptime_get();
+	k_spinlock_key_t key = k_spin_lock(&cmd_lock);
+
+	latest = (struct link_cmd){
+		.valid = true,
+		.seq = seq,
+		.throttle = cmd->throttle,
+		.brake = cmd->brake,
+		.steer = cmd->steer,
+		.buttons = cmd->buttons,
+		.rx_ms = now,
+	};
+	k_spin_unlock(&cmd_lock, key);
+	atomic_set(&last_seq, seq);
+
+	sys_state_on_buttons(cmd->buttons, now); /* self-test press logic */
+	sys_state_on_good_cmd(); /* may clear POWERUP/LINK_LOST/BAD_CMD */
+	k_mutex_unlock(&accept_mtx);
+	link_notify();           /* wake the control thread */
+}
+
+/*
  * link_rx thread (priority LINK_RX_PRIO = 1, above everything else in the
  * app): validates each frame from the ISR and publishes it. It is high
  * priority because brake/throttle (2 ms budget) go through here.
@@ -203,40 +252,7 @@ static void link_rx_thread(void *a, void *b, void *c)
 	for (;;) {
 		k_msgq_get(&rx_q, &f, K_FOREVER);
 		lp_decode_cmd(&f, &cmd);
-
-		if (!lp_cmd_in_range(&cmd)) {
-			/* Reject: never stored, never acted on, and it does not
-			 * feed the link watchdog.
-			 */
-			atomic_inc(&range_err);
-			sys_state_on_bad_cmd();
-			continue;
-		}
-
-		/* Good command -> push the watchdog deadline out again. */
-		k_timer_start(&link_wd, K_MSEC(LINK_TIMEOUT_MS), K_NO_WAIT);
-
-		/* Publish as one struct under a lock, so a reader never sees
-		 * a new throttle paired with an old brake.
-		 */
-		int64_t now = k_uptime_get();
-		k_spinlock_key_t key = k_spin_lock(&cmd_lock);
-
-		latest = (struct link_cmd){
-			.valid = true,
-			.seq = f.seq,
-			.throttle = cmd.throttle,
-			.brake = cmd.brake,
-			.steer = cmd.steer,
-			.buttons = cmd.buttons,
-			.rx_ms = now,
-		};
-		k_spin_unlock(&cmd_lock, key);
-		atomic_set(&last_seq, f.seq);
-
-		sys_state_on_buttons(cmd.buttons, now); /* self-test press logic */
-		sys_state_on_good_cmd(); /* may clear POWERUP/LINK_LOST/BAD_CMD */
-		link_notify();           /* wake the control thread */
+		accept_cmd(f.seq, &cmd);
 	}
 }
 
@@ -298,6 +314,11 @@ void link_set_currents(uint16_t motor_l_ma, uint16_t motor_r_ma, uint16_t servo_
 	atomic_set(&i_motor_l, motor_l_ma);
 	atomic_set(&i_motor_r, motor_r_ma);
 	atomic_set(&i_servo, servo_ma);
+}
+
+void link_inject_cmd(uint8_t seq, const struct lp_cmd *cmd)
+{
+	accept_cmd(seq, cmd);
 }
 
 void link_notify(void)
