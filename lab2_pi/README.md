@@ -21,7 +21,7 @@ Copy the whole `distributed-embedded` folder to the Pi; `lab2_pi` needs `../comm
 cd distributed-embedded/lab2_pi
 make test        # parser unit tests
 make
-./cockpit        # or: sudo ./cockpit -r   (SCHED_FIFO, for timing captures)
+sudo ./cockpit   # sudo gives it realtime (SCHED_FIFO) priority; plain ./cockpit also works
 ```
 Start the Mac proxy as in Appendix A. `--interval-ms 20` is recommended: a quick double press of the self-test button can fall between 50 ms samples.
 

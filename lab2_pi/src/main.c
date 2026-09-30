@@ -14,7 +14,6 @@
  *                    c = send one frame with a corrupted CRC, q = quit.
  */
 #include <errno.h>
-#include <getopt.h>
 #include <math.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -25,7 +24,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/timerfd.h>
 #include <time.h>
@@ -81,10 +79,10 @@ struct ctx {
 	uint32_t shown_n;
 };
 
-static void on_signal(int sig)
+static void handle_signal(int sig)
 {
 	(void)sig;
-	running = 0;
+	running = 0; // tell the main loop to stop
 }
 
 /* Monotonic clock: unaffected by NTP / wall-clock changes, so time deltas
@@ -95,6 +93,7 @@ static uint64_t now_us(void)
 	struct timespec ts;
 
 	clock_gettime(CLOCK_MONOTONIC, &ts);
+	// seconds + nanoseconds -> microseconds
 	return (uint64_t)ts.tv_sec * 1000000u + (uint64_t)ts.tv_nsec / 1000u;
 }
 
@@ -104,13 +103,16 @@ static int map_axis(long raw, long from, long to, int lo, int hi)
 	if (to == from) {
 		return lo;
 	}
+	// how far raw is between from and to (0.0 to 1.0)
 	double t = (double)(raw - from) / (double)(to - from);
 
+	// clamp to the ends
 	if (t < 0.0) {
 		t = 0.0;
 	} else if (t > 1.0) {
 		t = 1.0;
 	}
+	// scale into the output range and round
 	return (int)lround(lo + t * (hi - lo));
 }
 
@@ -141,6 +143,7 @@ static struct lp_cmd scale(const DIJOYSTATE2_t *s)
 	} else {
 		steer = map_axis(s->lX, STEER_RAW_CENTER, STEER_RAW_RIGHT, 0, 100);
 	}
+	// tiny values near center count as 0
 	if (abs(steer) <= STEER_DEADBAND) {
 		steer = 0;
 	}
@@ -153,9 +156,11 @@ static struct lp_cmd scale(const DIJOYSTATE2_t *s)
 	int thr = map_axis(s->lY, THR_RAW_RELEASED, THR_RAW_PRESSED, 0, 100);
 	int brk = map_axis(s->lRz, BRK_RAW_RELEASED, BRK_RAW_PRESSED, 0, 100);
 
+	// apply the pedal deadbands
 	c.throttle = (uint8_t)(thr < THR_DEADBAND ? 0 : thr);
 	c.brake = (uint8_t)(brk < BRK_DEADBAND ? 0 : brk);
 
+	// turn signal buttons
 	bool left = button(s, BTN_IDX_LEFT);
 	bool right = button(s, BTN_IDX_RIGHT);
 
@@ -163,6 +168,7 @@ static struct lp_cmd scale(const DIJOYSTATE2_t *s)
 	if (left != right) {
 		c.buttons |= left ? LP_BTN_LEFT : LP_BTN_RIGHT;
 	}
+	// self-test button
 	if (button(s, BTN_IDX_TEST)) {
 		c.buttons |= LP_BTN_TEST;
 	}
@@ -175,14 +181,17 @@ static struct lp_cmd scale(const DIJOYSTATE2_t *s)
  */
 static void send_cmd(struct ctx *x, bool corrupt)
 {
-	struct lp_cmd c = x->last;
+	struct lp_cmd c = x->last; // copy so the injection below doesn't change x->last
 	uint8_t buf[LP_FRAME_MAX];
 
+	// 'b' key: swap in a bad throttle value
 	if (now_us() < x->inject_until_us) {
 		c.throttle = 150; /* CRC-valid but out of range */
 	}
+	// build the 15-byte frame, seq goes up by 1 each time
 	size_t n = lp_encode_cmd(buf, x->seq++, &c);
 
+	// 'c' key: break the crc so the stm32 drops it
 	if (corrupt) {
 		buf[n - 1] ^= 0xFF;
 	}
@@ -197,13 +206,15 @@ static void send_cmd(struct ctx *x, bool corrupt)
 	if (write(x->ser, buf, n) != (ssize_t)n) {
 		x->tx_errs++;
 	}
+	// remember when we sent, for the 20 ms refresh
 	x->last_send_us = now_us();
 	x->cmds_sent++;
 }
 
 /* One wheel packet from the proxy: 4-byte LE counter + DIJOYSTATE2. */
-static void on_udp(struct ctx *x, int sock)
+static void handle_udp(struct ctx *x, int sock)
 {
+	// read one udp packet
 	uint8_t buf[512];
 	ssize_t n = recv(sock, buf, sizeof(buf), 0);
 
@@ -215,13 +226,14 @@ static void on_udp(struct ctx *x, int sock)
 		x->udp_bad_len++;
 		return;
 	}
-	tp_toggle(TP_UDP_RX);
+	tp_toggle(TP_UDP_RX); // mark udp_rx on the scope
 
 	/* The proxy increments its counter on every packet, so a jump means
 	 * UDP packets were lost (normal now and then on Wi-Fi).
 	 */
 	uint32_t counter = buf[0] | (buf[1] << 8) | (buf[2] << 16) | ((uint32_t)buf[3] << 24);
 
+	// count lost packets
 	if (x->have_counter && counter > x->last_counter + 1) {
 		x->udp_lost += counter - x->last_counter - 1;
 	}
@@ -233,6 +245,7 @@ static void on_udp(struct ctx *x, int sock)
 	DIJOYSTATE2_t state;
 
 	memcpy(&state, buf + 4, sizeof(state));
+	// convert to link units and remember it as the latest command
 	x->last = scale(&state);
 	x->last_udp_us = now_us();
 	x->have_udp = true;
@@ -244,17 +257,20 @@ static void on_udp(struct ctx *x, int sock)
  * byte goes through the shared parser, which finds frame boundaries and
  * checks the CRC.
  */
-static void on_serial(struct ctx *x)
+static void handle_serial(struct ctx *x)
 {
 	uint8_t buf[256];
 	ssize_t n;
 
+	// read everything waiting on the port
 	while ((n = read(x->ser, buf, sizeof(buf))) > 0) {
 		uint64_t now = now_us();
 
+		// feed the bytes through the parser one at a time
 		for (ssize_t i = 0; i < n; i++) {
 			enum lp_result r = lp_parse_byte(&x->parser, buf[i], (uint32_t)now);
 
+			// STATUS frame: state, faults, error counters
 			if (r == LP_OK && x->parser.frame.type == LP_TYPE_STATUS) {
 				lp_decode_status(&x->parser.frame, &x->st);
 				/* Track the gap between status frames: this is
@@ -272,11 +288,14 @@ static void on_serial(struct ctx *x)
 					x->win_sum += dt;
 					x->win_n++;
 				}
+				// remember this frame for the next gap and STM SILENT check
 				x->have_status = true;
 				x->last_status_us = now;
 				x->status_frames++;
+			// CURRENTS frame: the three mA readings
 			} else if (r == LP_OK && x->parser.frame.type == LP_TYPE_CURRENTS) {
 				lp_decode_currents(&x->parser.frame, &x->cur);
+			// broken frame from the stm32
 			} else if (r == LP_ERR_CRC || r == LP_ERR_LEN || r == LP_ERR_GAP) {
 				x->status_rx_err++;
 			}
@@ -289,6 +308,7 @@ static void print_line(struct ctx *x, uint64_t now)
 {
 	bool fresh = x->have_udp && now - x->last_udp_us < MS(UDP_STALE_MS);
 
+	// left half: what we're sending to the stm32
 	printf("UDP %6u (lost %u) %s| CMD %6u thr=%3u brk=%3u str=%+4d btn=%c%c%c%s | ",
 	       x->udp_pkts, x->udp_lost, fresh ? "" : "STALE ", x->cmds_sent,
 	       x->last.throttle, x->last.brake, x->last.steer,
@@ -303,6 +323,7 @@ static void print_line(struct ctx *x, uint64_t now)
 	if (!x->have_status || now - x->last_status_us > MS(STATUS_SILENT_MS)) {
 		printf("STM SILENT\n");
 	} else {
+		// right half: what the stm32 reports back
 		printf("STM %s f=0x%02x ack=%3u crcErr=%u rngErr=%u I=%u/%u/%u mA "
 		       "hb=%.1f/%.1f/%.1f ms (n=%u)\n",
 		       x->st.state == LP_STATE_NORMAL ? "NORMAL" : "ERROR ", x->st.faults,
@@ -310,14 +331,14 @@ static void print_line(struct ctx *x, uint64_t now)
 		       x->cur.i_motor_r_ma, x->cur.i_servo_ma, x->shown_min, x->shown_avg,
 		       x->shown_max, x->shown_n);
 	}
-	fflush(stdout);
+	fflush(stdout); // show it now, not when the buffer fills
 }
 
 /*
  * Runs every TICK_MS (5 ms). Handles everything that is time-driven rather
  * than event-driven: command refresh, heartbeat stats, console printing.
  */
-static void on_tick(struct ctx *x, int tfd)
+static void handle_timer(struct ctx *x, int tfd)
 {
 	static uint64_t next_print;
 	uint64_t expirations;
@@ -330,6 +351,7 @@ static void on_tick(struct ctx *x, int tfd)
 		return;
 	}
 
+	// is wheel data recent, and is a 'b' injection running
 	bool fresh = x->have_udp && now - x->last_udp_us < MS(UDP_STALE_MS);
 	bool injecting = now < x->inject_until_us;
 
@@ -356,6 +378,7 @@ static void on_tick(struct ctx *x, int tfd)
 		x->win_start_us = now;
 	}
 
+	// print the status line 5 times a second
 	if (now >= next_print) {
 		next_print = now + MS(PRINT_MS);
 		print_line(x, now);
@@ -363,24 +386,26 @@ static void on_tick(struct ctx *x, int tfd)
 }
 
 /* Keyboard commands for fault injection during checkoff. */
-static void on_stdin(struct ctx *x, struct pollfd *pfd)
+static void handle_keyboard(struct ctx *x, struct pollfd *pfd)
 {
 	char line[64];
 
+	// read one line typed in the terminal
 	if (!fgets(line, sizeof(line), stdin)) {
 		pfd->fd = -1; /* stdin closed (e.g. running under nohup) */
 		return;
 	}
+	// act on the first letter
 	switch (line[0]) {
-	case 'b':
+	case 'b': // out-of-range throttle for 1 s
 		x->inject_until_us = now_us() + MS(INJECT_BAD_MS);
 		printf(">>> injecting out-of-range throttle for %d ms\n", INJECT_BAD_MS);
 		break;
-	case 'c':
+	case 'c': // one corrupt-crc frame
 		send_cmd(x, true);
 		printf(">>> sent one corrupt-CRC frame\n");
 		break;
-	case 'q':
+	case 'q': // quit
 		running = 0;
 		break;
 	default:
@@ -389,68 +414,43 @@ static void on_stdin(struct ctx *x, struct pollfd *pfd)
 	}
 }
 
-static void usage(const char *argv0)
+int main(void)
 {
-	fprintf(stderr, "usage: %s [-d serial_dev] [-r]\n"
-			"  -d  serial device (default %s)\n"
-			"  -r  SCHED_FIFO priority 80 + mlockall (run with sudo)\n",
-		argv0, SERIAL_DEV);
-}
-
-int main(int argc, char **argv)
-{
-	const char *dev = SERIAL_DEV;
-	bool realtime = false;
-	int opt;
-
-	while ((opt = getopt(argc, argv, "d:rh")) != -1) {
-		switch (opt) {
-		case 'd':
-			dev = optarg;
-			break;
-		case 'r':
-			realtime = true;
-			break;
-		default:
-			usage(argv[0]);
-			return opt == 'h' ? 0 : 1;
-		}
-	}
-
-	/* Optional: realtime priority so other Linux processes can't delay the
-	 * UDP -> serial path, and locked memory so page faults can't either.
-	 * Use it when taking timing captures.
+	/* Realtime priority: whenever cockpit has work, Linux runs it before
+	 * any normal process, so the UDP -> serial delay stays small and steady
+	 * (the SCHED_FIFO assumption in our Lab 1 timing analysis, 6.2). Needs
+	 * sudo; without it we just run at normal priority.
 	 */
-	if (realtime) {
-		struct sched_param sp = {.sched_priority = 80};
+	struct sched_param sp = {.sched_priority = 80};
 
-		if (sched_setscheduler(0, SCHED_FIFO, &sp) < 0) {
-			perror("sched_setscheduler (need sudo?)");
-		}
-		if (mlockall(MCL_CURRENT | MCL_FUTURE) < 0) {
-			perror("mlockall");
-		}
+	if (sched_setscheduler(0, SCHED_FIFO, &sp) < 0) {
+		perror("sched_setscheduler (run with sudo for realtime priority)");
 	}
 
-	signal(SIGINT, on_signal);
-	signal(SIGTERM, on_signal);
+	// set up kill signals
+	signal(SIGINT, handle_signal);
+	signal(SIGTERM, handle_signal);
 
+	// set up the scope test point pins
 	static const int tp_pins[] = {TP_UDP_RX, TP_CMD_TX};
-
 	tp_init(tp_pins, 2);
 
+	// all program state, starts zeroed
 	struct ctx x = {0};
 
-	x.ser = serial_open(dev);
+	// open the serial link to the stm32
+	x.ser = serial_open(SERIAL_DEV);
 	if (x.ser < 0) {
 		return 1;
 	}
+	// set up the status frame parser and start the heartbeat stats
 	lp_parser_init(&x.parser, PARSER_GAP_US);
 	x.win_start_us = now_us();
 
 	/* Bind to INADDR_ANY (every interface) instead of a hard-coded IP like
 	 * receiver.c did, so a changed campus IP address doesn't break us.
 	 */
+	// udp socket for wheel packets on port 8000
 	int sock = socket(AF_INET, SOCK_DGRAM, 0);
 	struct sockaddr_in addr = {
 		.sin_family = AF_INET,
@@ -458,6 +458,7 @@ int main(int argc, char **argv)
 		.sin_addr.s_addr = htonl(INADDR_ANY),
 	};
 
+	// claim port 8000, fails if another program already has it
 	if (sock < 0 || bind(sock, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
 		perror("UDP bind (is proxy_receiver or another copy still running?)");
 		return 1;
@@ -466,6 +467,7 @@ int main(int argc, char **argv)
 	/* timerfd: a periodic timer that shows up as a readable fd, so it fits
 	 * into the same poll() loop as the sockets (no second thread).
 	 */
+	// first tick after 5 ms, then every 5 ms
 	int tfd = timerfd_create(CLOCK_MONOTONIC, 0);
 	struct itimerspec its = {
 		.it_interval = {.tv_nsec = TICK_MS * 1000000L},
@@ -477,23 +479,28 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
+	// startup banner and config warnings
 	printf("cockpit: UDP :%d -> %s @115200. Test points GPIO%d=UDP_RX GPIO%d=CMD_TX\n",
-	       UDP_PORT, dev, TP_UDP_RX, TP_CMD_TX);
+	       UDP_PORT, SERIAL_DEV, TP_UDP_RX, TP_CMD_TX);
 	if (BTN_IDX_LEFT < 0 || BTN_IDX_RIGHT < 0 || BTN_IDX_TEST < 0) {
 		printf("warning: some BTN_IDX_* in config.h are not set yet\n");
 	}
 	printf("keys: b = out-of-range for 1 s, c = corrupt CRC frame, q = quit\n");
 
-	struct pollfd pfd[4] = {
-		{.fd = sock, .events = POLLIN},
-		{.fd = x.ser, .events = POLLIN},
-		{.fd = tfd, .events = POLLIN},
-		{.fd = STDIN_FILENO, .events = POLLIN},
+	/* The four inputs poll() watches, one named slot each. */
+	enum { FD_UDP, FD_SERIAL, FD_TIMER, FD_KEYBOARD, FD_COUNT };
+	struct pollfd pfd[FD_COUNT] = {
+		[FD_UDP]      = {.fd = sock, .events = POLLIN},
+		[FD_SERIAL]   = {.fd = x.ser, .events = POLLIN},
+		[FD_TIMER]    = {.fd = tfd, .events = POLLIN},
+		[FD_KEYBOARD] = {.fd = STDIN_FILENO, .events = POLLIN},
 	};
 
-	/* Main loop: sleep until any fd is ready, then handle it. */
+	/* Main loop: sleep until any input is ready, then handle it. */
 	while (running) {
-		if (poll(pfd, 4, -1) < 0) {
+		// sleep until something is ready (-1 = no timeout)
+		if (poll(pfd, FD_COUNT, -1) < 0) {
+			// a signal woke us up, go check running
 			if (errno == EINTR) {
 				continue;
 			}
@@ -501,20 +508,21 @@ int main(int argc, char **argv)
 			break;
 		}
 		/* UDP first: it is the latency-critical path. */
-		if (pfd[0].revents & POLLIN) {
-			on_udp(&x, sock);
+		if (pfd[FD_UDP].revents & POLLIN) {
+			handle_udp(&x, sock);
 		}
-		if (pfd[1].revents & POLLIN) {
-			on_serial(&x);
+		if (pfd[FD_SERIAL].revents & POLLIN) {
+			handle_serial(&x);
 		}
-		if (pfd[2].revents & POLLIN) {
-			on_tick(&x, tfd);
+		if (pfd[FD_TIMER].revents & POLLIN) {
+			handle_timer(&x, tfd);
 		}
-		if (pfd[3].revents & (POLLIN | POLLHUP)) {
-			on_stdin(&x, &pfd[3]);
+		if (pfd[FD_KEYBOARD].revents & (POLLIN | POLLHUP)) {
+			handle_keyboard(&x, &pfd[FD_KEYBOARD]);
 		}
 	}
 
+	// cleanup: test pins low, close everything
 	tp_release();
 	close(x.ser);
 	close(sock);

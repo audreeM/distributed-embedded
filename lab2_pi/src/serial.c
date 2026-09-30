@@ -7,6 +7,7 @@
 
 int serial_open(const char *dev)
 {
+	// open for read and write, don't make it our terminal, don't block
 	int fd = open(dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
 
 	if (fd < 0) {
@@ -16,6 +17,7 @@ int serial_open(const char *dev)
 
 	struct termios tio;
 
+	// read the current port settings
 	if (tcgetattr(fd, &tio) < 0) {
 		perror("tcgetattr");
 		close(fd);
@@ -26,6 +28,7 @@ int serial_open(const char *dev)
 	 * untouched.
 	 */
 	cfmakeraw(&tio);
+	// 115200 baud both ways
 	cfsetispeed(&tio, B115200);
 	cfsetospeed(&tio, B115200);
 	/* 8N1, no modem control lines, no hardware flow control (only TX, RX
@@ -36,6 +39,7 @@ int serial_open(const char *dev)
 	/* read() returns right away with whatever bytes are available. */
 	tio.c_cc[VMIN] = 0;
 	tio.c_cc[VTIME] = 0;
+	// apply the new settings right away
 	if (tcsetattr(fd, TCSANOW, &tio) < 0) {
 		perror("tcsetattr");
 		close(fd);
