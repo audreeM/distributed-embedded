@@ -1,0 +1,51 @@
+
+&spi1 { status = "disabled"; };
+
+&timers2 {
+    status = "okay";
+    
+    blink_pwm_tim2: pwm {
+        status = "okay";
+        pinctrl-0 = <&tim2_ch1_pa5 &tim2_ch2_pa1 &tim2_ch3_pb10 &tim2_ch4_pa3>;
+        pinctrl-names = "default";
+    };
+};
+
+&timers3 {
+    status = "okay";
+    st,prescaler = <8399>;
+
+    blink_pwm_tim3: pwm {
+        status = "okay";
+        pinctrl-0 = <&tim3_ch1_pa6>;
+        pinctrl-names = "default";
+    };
+};
+
+/* 2. Describe the LED as a consumer of that PWM channel */
+/ {
+    pwm_blink_leds {
+        compatible = "pwm-leds";
+
+        blink_led_0: blink_led_0 {
+            /* <controller  channel  period(ns)  flags> -> 1 Hz */
+            pwms = <&blink_pwm_tim2 1 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+        };
+
+        blink_led_1: blink_led_1 {
+            /* <controller  channel  period(ns)  flags> -> 1 Hz */
+            pwms = <&blink_pwm_tim2 2 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+        };
+
+        blink_led_2: blink_led_2 {
+            /* <controller  channel  period(ns)  flags> -> 1 Hz */
+            pwms = <&blink_pwm_tim2 3 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+        };
+        
+        blink_led_3: blink_led_3 {
+            /* <controller  channel  period(ns)  flags> -> 1 Hz */
+            pwms = <&blink_pwm_tim3 1 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+        };
+    };
+};
+
