@@ -34,15 +34,17 @@ int tp_init(const int *pins, int npins)
 		perror("open /dev/gpiomem (test points disabled)");
 		return -1;
 	}
+	// map the gpio registers into our memory so we can write them directly
 	void *map = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
 
-	close(fd);
+	close(fd); // the mapping stays valid after closing
 	if (map == MAP_FAILED) {
 		perror("mmap /dev/gpiomem (test points disabled)");
 		return -1;
 	}
 	gpio = map;
 
+	// make each pin an output and start it low
 	for (int i = 0; i < npins; i++) {
 		/* 10 pins per GPFSEL register, 3 bits each. */
 		int reg = GPFSEL0 + pins[i] / 10;
@@ -57,6 +59,7 @@ int tp_init(const int *pins, int npins)
 
 void tp_toggle(int pin)
 {
+	// test points disabled (tp_init failed)
 	if (!gpio) {
 		return;
 	}
@@ -64,13 +67,14 @@ void tp_toggle(int pin)
 	 * saves a register read on the timing path.
 	 */
 	level ^= 1u << pin;
+	// write the pin's bit to the set (high) or clear (low) register
 	gpio[(level & (1u << pin)) ? GPSET0 : GPCLR0] = 1u << pin;
 }
 
 void tp_release(void)
 {
 	if (gpio) {
-		gpio[GPCLR0] = level;
+		gpio[GPCLR0] = level; // drive every pin we raised back low
 		level = 0;
 	}
 }
