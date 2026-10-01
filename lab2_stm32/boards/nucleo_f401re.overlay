@@ -38,6 +38,8 @@
 
 	zephyr,user {
 		cmdrx-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
+		/* PWM_SET test point (row 6): toggles each time motor.c writes a duty */
+		pwmset-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;   /* PC9 [CN10-1] */
 
 		/* 20 kHz motor PWM */
 		pwms = <&motor_pwm 1 PWM_USEC(50) PWM_POLARITY_NORMAL>,

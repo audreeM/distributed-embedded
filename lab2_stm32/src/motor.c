@@ -38,6 +38,10 @@ static const struct gpio_dt_spec in[4] = {
 };
 static const bool invert[2] = { MOTOR_L_INVERT, MOTOR_R_INVERT };
 
+// PWM_SET test point (PC9): toggled right after a new duty is written, so the
+// scope shows CMD_RX -> PWM_SET = software response time for R2.1
+static const struct gpio_dt_spec tp_pwm_set = GPIO_DT_SPEC_GET(USER, pwmset_gpios);
+
 K_TIMER_DEFINE(motor_timer, NULL, NULL);
 
 static void motor_thread(void *p1, void *p2, void *p3)
@@ -114,6 +118,7 @@ int motor_init(void)
 	for (int i = 0; i < 4; i++) {
 		gpio_pin_configure_dt(&in[i], GPIO_OUTPUT_INACTIVE);
 	}
+	gpio_pin_configure_dt(&tp_pwm_set, GPIO_OUTPUT_INACTIVE);
 	motor_brake();   /* start in a safe, stopped state */
 	return 0;
 }
@@ -128,7 +133,8 @@ void motor_forward(uint16_t duty)
 		gpio_pin_set_dt(&in[2 * s + 1], invert[s] ? 1 : 0);
 		pwm_set_pulse_dt(&en[s], (uint32_t)((uint64_t)en[s].period * duty / DUTY_MAX));
 	}
-	/* TODO checkoff: toggle PWM_SET test point here */
+	// both duties are written: mark it on the PWM_SET test point
+	gpio_pin_toggle_dt(&tp_pwm_set);
 }
 
 void motor_brake(void)
