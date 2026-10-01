@@ -106,4 +106,5 @@ int main(void)
 			gpio_pin_toggle_dt(&led);
 		}
 	}
+	return 0;
 }
