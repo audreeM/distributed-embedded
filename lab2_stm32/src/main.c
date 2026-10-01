@@ -62,6 +62,9 @@ int main(void)
 	// every 20 ms maps the wheel angle to the steering servo (3.3)
 	k_thread_start(servo_tid);
 
+	// every 20 ms runs the blinker state machine on the buttons and wheel (3.4)
+	k_thread_start(blinker_tid);
+
 	printk("lab2_stm32: link on USART6 (PA11 TX / PA12 RX), timeout %d ms\n",
 	       LINK_TIMEOUT_MS);
 

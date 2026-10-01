@@ -13,6 +13,9 @@
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/pwm.h> /* only for the PWM_HZ() macro */
 #include "blinker.h"
+#include "config.h"
+#include "link.h"
+#include "sys_state.h"
 
 #define NUM_LEDS 4
 #define BLINK_TICK_MS 250 /* half of the fastest period (2 Hz hazards) */
@@ -174,3 +177,88 @@ void update_outputs(state_t state)
 		return;
 	}
 }
+
+/* ------------------------------------------------------------ thread */
+
+// which wheel range steer is in, with hysteresis around the thresholds
+static wheel_event_t wheel_range(int steer, wheel_event_t prev)
+{
+	if (steer >= BLINK_ARM_STEER) {
+		return RIGHT_RANGE;
+	}
+	if (steer <= -BLINK_ARM_STEER) {
+		return LEFT_RANGE;
+	}
+	// between the thresholds: stay where we were until we're back inside CANCEL
+	if (prev == RIGHT_RANGE && steer > BLINK_CANCEL_STEER) {
+		return RIGHT_RANGE;
+	}
+	if (prev == LEFT_RANGE && steer < -BLINK_CANCEL_STEER) {
+		return LEFT_RANGE;
+	}
+	return MID_RANGE;
+}
+
+K_TIMER_DEFINE(blinker_timer, NULL, NULL);
+
+// every 20 ms: turn the latest command into a link_event_t and step the state machine
+static void blinker_thread(void *p1, void *p2, void *p3)
+{
+	struct link_cmd c;
+	state_t state = HAZARD; // we boot in ERROR (POWERUP), so hazards
+	bool prev_error = true;
+	uint8_t prev_buttons = 0;
+	wheel_event_t wheel = MID_RANGE;
+
+	if (blinker_init() < 0) {
+		printk("blinker GPIO not ready\n");
+		return;
+	}
+
+	k_timer_start(&blinker_timer, K_MSEC(BLINK_PERIOD_MS), K_MSEC(BLINK_PERIOD_MS));
+
+	for (;;) {
+		k_timer_status_sync(&blinker_timer);
+
+		link_get_cmd(&c);
+		bool error = sys_state_is_error();
+		uint8_t buttons = c.valid ? c.buttons : 0;
+		// a press is the moment the button goes down, not while it is held
+		uint8_t pressed = buttons & ~prev_buttons;
+		link_event_t ev;
+
+		// error: only report the moment we enter or leave it
+		if (error && !prev_error) {
+			ev.err = ENTER_ERR;
+		} else if (!error && prev_error) {
+			ev.err = EXIT_ERR;
+		} else {
+			ev.err = NO_ERR;
+		}
+
+		if (pressed & LP_BTN_LEFT) {
+			ev.button = LEFT_PRESS;
+		} else if (pressed & LP_BTN_RIGHT) {
+			ev.button = RIGHT_PRESS;
+		} else {
+			ev.button = NO_PRESS;
+		}
+
+		wheel = wheel_range(c.valid ? c.steer : 0, wheel);
+		ev.wheel = wheel;
+
+		state_t next = determine_next_state(state, ev);
+
+		// only touch the LEDs when the state changes, so the blink keeps its phase
+		if (next != state) {
+			update_outputs(next);
+			state = next;
+		}
+
+		prev_error = error;
+		prev_buttons = buttons;
+	}
+}
+
+K_THREAD_DEFINE(blinker_tid, STACK_SZ, blinker_thread, NULL, NULL, NULL, PRIO_BLINK, 0,
+		SYS_FOREVER_MS);

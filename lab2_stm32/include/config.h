@@ -12,6 +12,7 @@
 #define PRIO_SENSE 4
 #define PRIO_SERVO 3   /* 3.3: 50 ms budget */
 #define PRIO_SIM 5     /* test shell: simulated Pi commands */
+#define PRIO_BLINK 5   /* 3.4: 100 ms budget */
 
 // thread IDs, each defined (dormant) in the file that owns the thread
 // and started from main() once the safe state is set up
@@ -20,6 +21,7 @@ extern const k_tid_t motor_tid;
 extern const k_tid_t status_tid;
 extern const k_tid_t sense_tid;
 extern const k_tid_t servo_tid;
+extern const k_tid_t blinker_tid;
 
 #define CONTROL_PERIOD_MS   10       
 
@@ -49,5 +51,14 @@ extern const k_tid_t servo_tid;
 #define SERVO_INVERT        1       /* 1 if wheel-left turns the car right */
 #define SERVO_ABS_MIN_US    500     /* hard limits for raw calibration */
 #define SERVO_ABS_MAX_US    2500
+
+/* ---- 3.4 blinkers ----
+ * Wheel range for self-cancel, in steer units (-100..+100). The wheel counts
+ * as turned once |steer| >= ARM, and back in the middle once |steer| <= CANCEL.
+ * The 2-count gap (hysteresis) stops it flickering right at the threshold.
+ * From the Lab 1 design doc, 10.4. */
+#define BLINK_PERIOD_MS     20      /* how often the blinker thread checks inputs */
+#define BLINK_ARM_STEER     20
+#define BLINK_CANCEL_STEER  18
 
 #endif
