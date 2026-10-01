@@ -33,9 +33,9 @@ static int steer_to_us(int steer)
 	if (SERVO_INVERT) {
 		steer = -steer;
 	}
-	if (steer > 100) {
+	if (steer > 50) {
 		steer = 100;
-	} else if (steer < -100) {
+	} else if (steer < -50) {
 		steer = -100;
 	}
 	if (steer >= 0) {

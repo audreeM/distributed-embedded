@@ -26,8 +26,8 @@ extern const k_tid_t servo_tid;
 #define COUNTS_PER_REV      1317.1f  
 #define ENC_L_INVERT        0        
 #define ENC_R_INVERT        1
-#define MOTOR_L_INVERT      1        
-#define MOTOR_R_INVERT      0
+#define MOTOR_L_INVERT      0        
+#define MOTOR_R_INVERT      1
 
 #define THROTTLE_MAX        1000     
 #define VEL_MAX_RPM         70.0f    
@@ -43,10 +43,10 @@ extern const k_tid_t servo_tid;
  * each end stop, then set MIN/MAX a little INSIDE those so it never buzzes.
  * The defaults below are deliberately conservative. */
 #define SERVO_PERIOD_MS     20      /* 50 Hz frame, standard for hobby servos */
-#define SERVO_MIN_US        1300    /* MEASURE: full left  (steer = -100) */
-#define SERVO_CENTER_US     1500    /* MEASURE: wheels straight (steer = 0) */
-#define SERVO_MAX_US        1700    /* MEASURE: full right (steer = +100) */
-#define SERVO_INVERT        0       /* 1 if wheel-left turns the car right */
+#define SERVO_MIN_US        800    /* MEASURE: full left  (steer = -100) */
+#define SERVO_CENTER_US     1560    /* MEASURE: wheels straight (steer = 0) */
+#define SERVO_MAX_US        2100    /* MEASURE: full right (steer = +100) */
+#define SERVO_INVERT        1       /* 1 if wheel-left turns the car right */
 #define SERVO_ABS_MIN_US    500     /* hard limits for raw calibration */
 #define SERVO_ABS_MAX_US    2500
 
