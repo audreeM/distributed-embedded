@@ -4,7 +4,6 @@ project(lab2_car)
 
 target_sources(app PRIVATE 
 	src/main.c
-	src/cmd.c
 	src/motor.c
 	src/sense.c
 	src/link.c

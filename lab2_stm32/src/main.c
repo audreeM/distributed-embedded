@@ -50,10 +50,8 @@ int main(void)
 		return 0;
 	}
 
-	// wakes up when a frame arrives, serves brake, throttle, servo, and button presses
-	k_thread_start(cmd_tid);
-
-	// every 10 ms reads the encoders and updates the motors
+	// every 2 ms (CONTROL_PERIOD_MS) runs the motor PI loop; also wakes on
+	// each new command / fault change to brake immediately
 	k_thread_start(motor_tid);
 
 	// every 20 ms reads the three current sensors
@@ -74,7 +72,7 @@ int main(void)
 	struct link_cmd c;
 
 	for (;;) {
-		/* link_wait() wakes only ONE waiting thread, and cmd_thread is
+		/* link_wait() wakes only ONE waiting thread, and motor_thread is
 		 * the one that needs it, so this low-priority loop just runs
 		 * every 10 ms instead. */
 		k_msleep(10);

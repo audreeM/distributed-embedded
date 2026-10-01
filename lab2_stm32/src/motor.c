@@ -1,6 +1,7 @@
 /**
  * @file motor.c
- * @brief motor_thread runs every 10 ms: reads the encoders and updates the motors
+ * @brief motor_thread runs the PI loop every CONTROL_PERIOD_MS, and also wakes
+ *        on every new command / fault change (link_wait) to brake at once
  * 
  * L298N: EN pins get PWM (speed), IN pins set direction.
  *
@@ -42,8 +43,6 @@ static const bool invert[2] = { MOTOR_L_INVERT, MOTOR_R_INVERT };
 // scope shows CMD_RX -> PWM_SET = software response time for R2.1
 static const struct gpio_dt_spec tp_pwm_set = GPIO_DT_SPEC_GET(USER, pwmset_gpios);
 
-K_TIMER_DEFINE(motor_timer, NULL, NULL);
-
 static void motor_thread(void *p1, void *p2, void *p3)
 {
 	if (motor_init() || encoder_init()) {
@@ -59,11 +58,27 @@ static void motor_thread(void *p1, void *p2, void *p3)
 	float vel_f = 0.0f, prev_vel_f = 0.0f;  // filtered speed, for P/I and D
 	struct link_cmd c;
 
-	// periodic timer instead of k_msleep so the period doesn't drift by the loop's run time
-	k_timer_start(&motor_timer, K_MSEC(CONTROL_PERIOD_MS), K_MSEC(CONTROL_PERIOD_MS));
+	// Absolute tick deadline for the next control step, so the period doesn't
+	// drift by the loop's run time or by how often a command wakes us early.
+	const int64_t period_ticks = k_ms_to_ticks_ceil64(CONTROL_PERIOD_MS);
+	int64_t next = k_uptime_ticks() + period_ticks;
 
 	for (;;) {
-		k_timer_status_sync(&motor_timer);
+		// Sleep until the next control tick OR a new command / fault change,
+		// whichever comes first. This thread is the only link_wait() caller.
+		if (link_wait(K_TIMEOUT_ABS_TICKS(next))) {
+			// Woken early: act on brake / fail-safe now instead of at the
+			// next tick (R2.2, 2 ms). Throttle waits for the tick, so the
+			// PI loop keeps its fixed dt.
+			link_get_cmd(&c);
+			if (sys_state_is_error() || !c.valid || c.brake > 0) {
+				integral = 0.0f;
+				ramp = 0.0f;
+				motor_brake();
+			}
+			continue;
+		}
+		next += period_ticks;
 
 		// wheel velocity (rpm) from encoder counts since the last tick
 		float vel[2];
