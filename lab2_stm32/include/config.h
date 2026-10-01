@@ -23,7 +23,7 @@ extern const k_tid_t sense_tid;
 extern const k_tid_t servo_tid;
 extern const k_tid_t blinker_tid;
 
-#define CONTROL_PERIOD_MS   10       
+#define CONTROL_PERIOD_MS   2       
 
 #define COUNTS_PER_REV      1317.1f  
 #define ENC_L_INVERT        0        
