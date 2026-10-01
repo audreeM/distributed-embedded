@@ -55,6 +55,8 @@ static void motor_thread(void *p1, void *p2, void *p3)
 	const float dt = CONTROL_PERIOD_MS / 1000.0f;
 	int32_t last[2] = { encoder_read(0), encoder_read(1) };
 	float integral = 0.0f;
+	float ramp = 0.0f;                  // target that slides toward the pedal
+	float vel_f = 0.0f, prev_vel_f = 0.0f;  // filtered speed, for P/I and D
 	struct link_cmd c;
 
 	// periodic timer instead of k_msleep so the period doesn't drift by the loop's run time
@@ -73,6 +75,11 @@ static void motor_thread(void *p1, void *p2, void *p3)
 			last[s] = now;
 		}
 		float avg = (vel[0] + vel[1]) / 2.0f;
+		// low-pass the speed: at a 2 ms period one encoder count is ~23 rpm,
+		// so the raw average jumps around too much to control on
+		vel_f += VEL_ALPHA * (avg - vel_f);
+		float accel = (vel_f - prev_vel_f) / dt;   // for the D term
+		prev_vel_f = vel_f;
 
 		link_get_cmd(&c);
 
@@ -80,12 +87,18 @@ static void motor_thread(void *p1, void *p2, void *p3)
 		// so this is checked before throttle is even looked at
 		if (sys_state_is_error() || !c.valid || c.brake > 0) {
 			integral = 0.0f;   // don't wind up while stopped
+			ramp = 0.0f;       // wheels stop, so start the next ramp from 0
 			motor_brake();
 			continue;
 		}
 
-		// throttle 0..100 % -> target rpm
-		float target = VEL_MAX_RPM * c.throttle / 100.0f;
+		// throttle 0..100 % -> goal rpm, then move the target toward the goal
+		// by at most ACCEL_RPM_PER_S, so speed changes gradually
+		float goal = VEL_MAX_RPM * c.throttle / 100.0f;
+		float step = ACCEL_RPM_PER_S * dt;
+
+		ramp = (goal > ramp) ? MIN(ramp + step, goal) : MAX(ramp - step, goal);
+		float target = ramp;
 
 		if (target <= 0.0f) {
 			integral = 0.0f;
@@ -93,11 +106,17 @@ static void motor_thread(void *p1, void *p2, void *p3)
 			continue;
 		}
 
-		// PI on the average wheel speed
-		float err = target - avg;
+		// PID on the filtered average wheel speed. D acts on the measured
+		// speed (not the error), so a pedal change doesn't cause a kick.
+		float err = target - vel_f;
 
-		integral = clampf(integral + KI * err * dt, 0.0f, I_LIMIT);
-		uint16_t duty = (uint16_t)clampf(KP * err + integral, 0.0f, DUTY_MAX);
+		// feed-forward: the duty this speed roughly needs, so the wheels
+		// start at once; PID only corrects the leftover error
+		float ff = FF_OFFSET + FF_SLOPE * target;
+
+		integral = clampf(integral + KI * err * dt, -I_LIMIT, I_LIMIT);
+		uint16_t duty = (uint16_t)clampf(ff + KP * err + integral - KD * accel,
+						 0.0f, DUTY_MAX);
 
 		// TODO: remove later
 		static int n;

@@ -26,16 +26,21 @@ extern const k_tid_t blinker_tid;
 #define CONTROL_PERIOD_MS   2       
 
 #define COUNTS_PER_REV      1317.1f  
-#define ENC_L_INVERT        0        
-#define ENC_R_INVERT        1
+#define ENC_L_INVERT        1        
+#define ENC_R_INVERT        0
 #define MOTOR_L_INVERT      0        
 #define MOTOR_R_INVERT      1
 
 #define THROTTLE_MAX        1000     
-#define VEL_MAX_RPM         70.0f    
+#define VEL_MAX_RPM         250.0f    
 
 #define KP                  4.0f     
 #define KI                  20.0f
+#define FF_OFFSET           450.0f   /* duty where the wheels just start to turn */
+#define FF_SLOPE            1.7f     /* extra duty per rpm of target */
+#define KD                  0.0f     /* start at 0; raise only if it overshoots */
+#define ACCEL_RPM_PER_S     250.0f    /* target ramp: 0 -> 70 rpm in 2 s */
+#define VEL_ALPHA           0.05f    /* speed filter, ~40 ms smoothing at 2 ms */
 #define I_LIMIT             1000.0f  
 
 #define DUTY_MAX            1000     
