@@ -56,7 +56,7 @@ int main(void)
 	// every 10 ms reads the encoders and updates the motors
 	k_thread_start(motor_tid);
 
-	// every 10 ms reads the three current sensors
+	// every 20 ms reads the three current sensors
 	k_thread_start(sense_tid);
 
 	// every 20 ms maps the wheel angle to the steering servo (3.3)
