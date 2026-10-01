@@ -5,8 +5,8 @@ static const struct adc_dt_spec adc_ch =
 	ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
 
 /* Hardware constants */
-#define R_TOP_OHM      3300
-#define R_BOT_OHM      22000
+#define R_TOP_OHM      10000
+#define R_BOT_OHM      20000
 #define SENS_UV_PER_A  185000      /* ACS712-05B: 185 mV/A */
 #define N_SAMPLES      64
 #define FULL_SCALE_MA  5000
@@ -60,7 +60,7 @@ int main(void)
 		printk("ADC read failed\n");
 		return 0;
 	}
-	printk("Zero offset at pin: %d mV (expect ~2174)\n", zero_mv);
+	printk("Zero offset at pin: %d mV (expect ~1667)\n", zero_mv);
 
 	while (1) {
 		if (read_avg_mv(&mv) == 0) {
