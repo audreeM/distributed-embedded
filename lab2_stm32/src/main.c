@@ -74,10 +74,10 @@ int main(void)
 	struct link_cmd c;
 
 	for (;;) {
-		/* Wakes early on a new command or a fault change; the 10 ms
-		 * timeout keeps the LED blinking even with no traffic.
-		 */
-		link_wait(K_MSEC(10));
+		/* link_wait() wakes only ONE waiting thread, and cmd_thread is
+		 * the one that needs it, so this low-priority loop just runs
+		 * every 10 ms instead. */
+		k_msleep(10);
 
 		int64_t now = k_uptime_get();
 		uint32_t f = sys_state_faults();
