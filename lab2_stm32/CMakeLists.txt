@@ -7,10 +7,10 @@ target_sources(app PRIVATE
 	src/cmd.c
 	src/motor.c
 	src/sense.c
-	src/state.c
 	src/link.c
   	src/sys_state.c
 	src/encoder.c
+	src/blinker.c
 	src/servo.c
 	src/cli.c
 )

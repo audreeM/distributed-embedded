@@ -23,9 +23,9 @@
 /* --- Buttons: raw rgbButtons[] indices from `wheel_monitor -r` / --probe --
  * -1 = not configured yet (that button always reads released).
  */
-#define BTN_IDX_LEFT   (-1) /* TODO: left turn signal */
-#define BTN_IDX_RIGHT  (-1) /* TODO: right turn signal */
-#define BTN_IDX_TEST   (-1) /* TODO: self-test button */
+#define BTN_IDX_LEFT   9 /* LSB: left turn signal */
+#define BTN_IDX_RIGHT  8 /* RSB: right turn signal */
+#define BTN_IDX_TEST   1 /* B: self-test button */
 
 /* --- Network / serial ---------------------------------------------------- */
 #define UDP_PORT        8000

@@ -16,7 +16,6 @@
 #include <zephyr/kernel.h>
 #include <zephyr/sys/printk.h>
 #include "config.h"
-#include "state.h"
 #include "link.h"
 #include "sys_state.h"
 #include "cli.h"
@@ -38,7 +37,6 @@ static void print_faults(uint32_t f)
 
 int main(void)
 {
-	state_init();
 	int ret;
 
 	if (!gpio_is_ready_dt(&led) || gpio_pin_configure_dt(&led, GPIO_OUTPUT_INACTIVE) < 0) {
@@ -105,5 +103,4 @@ int main(void)
 			gpio_pin_toggle_dt(&led);
 		}
 	}
-	return 0;
 }

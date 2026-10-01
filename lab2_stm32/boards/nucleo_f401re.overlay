@@ -5,6 +5,13 @@
  *   Encoder L: PA6 [D12] / PA7 [D11]  TIM3
  *   Encoder R: PB6 [D10] / PB7 [CN7-21] TIM4
  *
+ * Blinkers (3.4): one TIM2 channel per side, each driving two pins
+ *   Left  (LED 0/1) TIM2_CH1: LED0 PA15 [CN7-17]  LED1 PA0 [A0]
+ *   Right (LED 2/3) TIM2_CH2: LED2 PA1  [A1]      LED3 PB3 [D3]
+ * PB9 (TIM11_CH1) is left free for the servo (3.3).
+ *
+ * Current sensor ADC1: PA4 [A2] IN4, PC1 [A4] IN11, PC0 [A5] IN10
+ *
  * Pi <-> STM32 link on USART6:
  *   PA11 = USART6_TX (CN10-14) -> Pi pin 10 (GPIO15 RXD)
  *   PA12 = USART6_RX (CN10-12) <- Pi pin 8  (GPIO14 TXD)
@@ -48,6 +55,7 @@
 &usart1 { status = "disabled"; };  /* PB6/PB7 */
 &spi1   { status = "disabled"; };  /* PA5-PA7, PB6 */
 &i2c3   { status = "disabled"; };  /* PA8 */
+&i2c1   { status = "disabled"; };  /* PB8/PB9 */
 
 /* Servo PWM: TIM2 channel 3 on PB10. Replaces the board's LED PWM on PA5. */
 &{/pwmleds} { status = "disabled"; };
@@ -110,3 +118,62 @@
 &tim4_ch1_pb6 { bias-pull-up; };
 &tim4_ch2_pb7 { bias-pull-up; };
 
+/* Blinker PWM on TIM2. CH1 is routed to both left pins and CH2 to both
+ * right pins, so the two LEDs on a side are driven by the same signal and
+ * always blink in step. Prescaler 8399: 84 MHz timer clock -> 10 kHz tick,
+ * so the 0.5 s / 1 s blink periods set in blinker.c are 5000 / 10000 ticks.
+ */
+&timers2 {
+	status = "okay";
+	st,prescaler = <8399>;
+	blink_pwm_tim2: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim2_ch1_pa15 &tim2_ch1_pa0 &tim2_ch2_pa1 &tim2_ch2_pb3>;
+		pinctrl-names = "default";
+	};
+};
+
+/* Blinker LEDs, looked up by label in blinker.c: LED 0-1 = left (CH1),
+ * 2-3 = right (CH2). Two LEDs share each channel, so blinker.c setting both
+ * just writes the same values to that channel twice.
+ * pwms = <controller channel default-period flags>; blinker.c sets the real
+ * period at runtime, so the 1 ms default is only a placeholder.
+ */
+/ {
+	pwm_blink_leds {
+		compatible = "pwm-leds";
+
+		blink_led_0: blink_led_0 {
+			pwms = <&blink_pwm_tim2 1 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+		};
+
+		blink_led_1: blink_led_1 {
+			pwms = <&blink_pwm_tim2 1 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+		};
+
+		blink_led_2: blink_led_2 {
+			pwms = <&blink_pwm_tim2 2 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+		};
+
+		blink_led_3: blink_led_3 {
+			pwms = <&blink_pwm_tim2 2 PWM_MSEC(1) PWM_POLARITY_NORMAL>;
+		};
+	};
+};
+
+// current sensor
+&adc1 {
+	pinctrl-0 = <&adc1_in10_pc0 &adc1_in4_pa4 &adc1_in11_pc1>;
+	pinctrl-names = "default";
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	channel@a  { reg = <10>; zephyr,gain = "ADC_GAIN_1"; zephyr,reference = "ADC_REF_INTERNAL";
+	             zephyr,acquisition-time = <ADC_ACQ_TIME_MAX>; zephyr,resolution = <12>; };
+	channel@4  { reg = <4>;  /* same four properties */ };
+	channel@b  { reg = <11>; /* same four properties */ };
+};
+
+/* inside the existing zephyr,user node: */
+io-channels = <&adc1 10>, <&adc1 4>, <&adc1 11>;
