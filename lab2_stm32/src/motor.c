@@ -58,6 +58,8 @@ static void motor_thread(void *p1, void *p2, void *p3)
 	float vel_f = 0.0f, prev_vel_f = 0.0f;  // filtered speed, for P/I and D
 	struct link_cmd c;
 
+	uint8_t pwm_set_seq = 0;
+
 	// Absolute tick deadline for the next control step, so the period doesn't
 	// drift by the loop's run time or by how often a command wakes us early.
 	const int64_t period_ticks = k_ms_to_ticks_ceil64(CONTROL_PERIOD_MS);
@@ -118,6 +120,10 @@ static void motor_thread(void *p1, void *p2, void *p3)
 		if (target <= 0.0f) {
 			integral = 0.0f;
 			motor_forward(0);   // coast
+			if (c.seq != pwm_set_seq) { 
+				gpio_pin_toggle_dt(&tp_pwm_set);
+				pwm_set_seq = c.seq;
+			}
 			continue;
 		}
 
@@ -139,8 +145,12 @@ static void motor_thread(void *p1, void *p2, void *p3)
 			printk("tgt=%.1f vL=%.1f vR=%.1f duty=%u\n",
 				(double)target, (double)vel[0], (double)vel[1], duty);
 		}
-		// print end
 		motor_forward(duty);
+		if (c.seq != pwm_set_seq) {
+			gpio_pin_toggle_dt(&tp_pwm_set);
+			pwm_set_seq = c.seq;
+		}
+	}
 	}
 }
 
@@ -167,8 +177,6 @@ void motor_forward(uint16_t duty)
 		gpio_pin_set_dt(&in[2 * s + 1], invert[s] ? 1 : 0);
 		pwm_set_pulse_dt(&en[s], (uint32_t)((uint64_t)en[s].period * duty / DUTY_MAX));
 	}
-	// both duties are written: mark it on the PWM_SET test point
-	gpio_pin_toggle_dt(&tp_pwm_set);
 }
 
 void motor_brake(void)
