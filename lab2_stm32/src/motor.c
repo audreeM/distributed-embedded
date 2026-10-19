@@ -151,7 +151,6 @@ static void motor_thread(void *p1, void *p2, void *p3)
 			pwm_set_seq = c.seq;
 		}
 	}
-	}
 }
 
 
