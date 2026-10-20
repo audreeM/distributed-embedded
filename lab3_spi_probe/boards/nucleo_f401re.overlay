@@ -1,0 +1,8 @@
+/*
+ * Wiring probe: every MCP2515 pin is driven as plain GPIO, so the SPI1
+ * peripheral and anything else the board puts on these pins is turned off.
+ */
+&spi1 { status = "disabled"; };     /* PA5-PA7 */
+&usart1 { status = "disabled"; };   /* PB6 */
+&{/pwmleds} { status = "disabled"; };
+&timers2 { status = "disabled"; };  /* PWM LED on PA5 */
