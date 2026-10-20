@@ -56,6 +56,7 @@ static void motor_thread(void *p1, void *p2, void *p3)
 	float integral = 0.0f;
 	float ramp = 0.0f;                  // target that slides toward the pedal
 	float vel_f = 0.0f, prev_vel_f = 0.0f;  // filtered speed, for P/I and D
+	float accel = 0.0f;                 // for the D term
 	struct link_cmd c;
 
 	uint8_t pwm_set_seq = 0;
@@ -70,13 +71,28 @@ static void motor_thread(void *p1, void *p2, void *p3)
 		// whichever comes first. This thread is the only link_wait() caller.
 		if (link_wait(K_TIMEOUT_ABS_TICKS(next))) {
 			// Woken early: act on brake / fail-safe now instead of at the
-			// next tick (R2.2, 2 ms). Throttle waits for the tick, so the
-			// PI loop keeps its fixed dt.
+			// next tick (R2.2). The PI loop still integrates only on ticks.
 			link_get_cmd(&c);
 			if (sys_state_is_error() || !c.valid || c.brake > 0) {
 				integral = 0.0f;
 				ramp = 0.0f;
 				motor_brake();
+			} else if (c.seq != pwm_set_seq) {
+				// new throttle command: write its duty now instead of at
+				// the next tick (R2.1). Same math as the tick below, using
+				// the speed and integral from the last tick.
+				float goal = VEL_MAX_RPM * c.throttle / 100.0f;
+				float step = ACCEL_RPM_PER_S * dt;
+
+				ramp = (goal > ramp) ? MIN(ramp + step, goal) : MAX(ramp - step, goal);
+				float ff = FF_OFFSET + FF_SLOPE * ramp;
+				float err = ramp - vel_f;
+
+				motor_forward(ramp <= 0.0f ? 0 :
+					(uint16_t)clampf(ff + KP * err + integral - KD * accel,
+							 0.0f, DUTY_MAX));
+				gpio_pin_toggle_dt(&tp_pwm_set);
+				pwm_set_seq = c.seq;
 			}
 			continue;
 		}
@@ -95,7 +111,7 @@ static void motor_thread(void *p1, void *p2, void *p3)
 		// low-pass the speed: at a 2 ms period one encoder count is ~23 rpm,
 		// so the raw average jumps around too much to control on
 		vel_f += VEL_ALPHA * (avg - vel_f);
-		float accel = (vel_f - prev_vel_f) / dt;   // for the D term
+		accel = (vel_f - prev_vel_f) / dt;   // for the D term
 		prev_vel_f = vel_f;
 
 		link_get_cmd(&c);
