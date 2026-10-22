@@ -48,13 +48,13 @@
 #define BLINK_MIN_GAP_MS  20   /* catalog: BLINK minimum interarrival */
 #define FAULT_MIN_GAP_MS  20   /* catalog: FAULT minimum interarrival */
 #define FORCE_UDP_MS      50   /* R2.3: UDP force message to the proxy every 50 ms */
-#define DEBOUNCE_MS       50   /* R2.5: presses < 50 ms apart are one press */
-#define DOUBLE_PRESS_MS   500  /* R3: two presses within 500 ms restore the zone */
+#define SELFTEST_LOCKOUT_MS 50   /* R2.5: presses < 50 ms apart are one press */
+#define SELFTEST_DOUBLE_MS  500  /* R3: two presses within 500 ms restore the zone */
 #define PRINT_MS          200  /* console status line */
 
 /* --- Turn-signal self-cancel (team-defined values, steer units) ----------- */
-#define TURN_ARM          20   /* |steer| >= this after the signal starts: armed */
-#define TURN_CANCEL       18   /* armed and back to |steer| <= this: cancel */
+#define BLINK_ARM_STEER     20   /* |steer| >= this after the signal starts: armed */
+#define BLINK_CANCEL_STEER  18   /* armed and back to |steer| <= this: cancel */
 
 /* --- Test points and LEDs (BCM GPIO numbers, see the wiring page) -------- */
 #define TP_UDP_RX    23 /* row 3: toggles on each UDP state update */
