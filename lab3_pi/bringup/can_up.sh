@@ -28,6 +28,10 @@ for IF in can0 can1; do
 		continue
 	fi
 	sudo ip link set "$IF" down
+	# Short TX queue: while a jumper is pulled, frames pile up here and are
+	# flushed late when it goes back in. 4 keeps that within what the
+	# receivers' duplicate filter rejects (up to 7 old frames, can_catalog.h).
+	sudo ip link set "$IF" txqueuelen 4
 	sudo ip link set "$IF" up type can bitrate 500000 restart-ms 100
 	echo "--- $IF ($(spidev_of $IF))"
 	ip -details link show "$IF" | grep -E "state|bitrate|clock"
