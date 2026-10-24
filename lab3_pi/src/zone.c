@@ -1,6 +1,4 @@
 #include <string.h>
-
-#include "config.h"
 #include "util.h"
 #include "zone.h"
 
@@ -34,13 +32,15 @@ static void on_test_button(struct zone *z, bool pressed, int64_t now_ms)
 	bool edge = pressed && !prev_pressed;
 
 	prev_pressed = pressed;
-	if (!edge || now_ms < lockout_until_ms) {
+	if (!edge || now_ms < lockout_until_ms)
+	{
 		return;
 	}
 	lockout_until_ms = now_ms + SELFTEST_LOCKOUT_MS;
 
 	/* Normal (or another fault): one press = local fail, right away. */
-	if (!z->self_test) {
+	if (!z->self_test)
+	{
 		z->self_test = true;
 		z->fault_to_send = CAN_FAULT_SELF_TEST;
 		first_press_ms = -1;
@@ -50,12 +50,41 @@ static void on_test_button(struct zone *z, bool pressed, int64_t now_ms)
 	/* Already in self-test: the second press within the window restores;
 	 * otherwise this press becomes the first of a possible double press.
 	 */
-	if (first_press_ms >= 0 && now_ms - first_press_ms <= SELFTEST_DOUBLE_MS) {
+	if (first_press_ms >= 0 && now_ms - first_press_ms <= SELFTEST_DOUBLE_MS)
+	{
 		z->self_test = false;
 		first_press_ms = -1;
-	} else {
+	}
+	else
+	{
 		first_press_ms = now_ms;
 	}
+}
+
+/* True while a FAULT from another zone should still hold us in ERROR.
+ * A slot clears once it is FAULT_HOLD_MS old and both peers' heartbeats
+ * are back, so a stale FAULT can't hold the system in ERROR forever.
+ */
+bool fault_active(struct zone *z, const struct zone_inputs *in, uint64_t now_us)
+{
+	bool active = false;
+
+	for (int k = CAN_ZONE_N2; k <= CAN_ZONE_N3; k++)
+	{
+		if (z->fault_reason[k] == 0)
+		{
+			continue;
+		}
+		if (now_us - z->fault_us[k] >= MS(FAULT_HOLD_MS) && in->peers_alive)
+		{
+			z->fault_reason[k] = 0;
+		}
+		else
+		{
+			active = true;
+		}
+	}
+	return active;
 }
 
 void zone_update(struct zone *z, const struct zone_inputs *in, uint64_t now_us)
@@ -86,15 +115,46 @@ void zone_update(struct zone *z, const struct zone_inputs *in, uint64_t now_us)
 	 * how long a received FAULT keeps you in ERROR after its zone recovers
 	 * (e.g. until that zone's heartbeat is back).
 	 */
-	(void)in;
+	// go to LOCAL_FAIL if the test button was pressed or data from the wheel / pedals stopped
+	if (z->self_test || !in->udp_fresh)
+	{
+		if (z->state != ZONE_LOCAL_FAIL && !in->udp_fresh && !z->self_test)
+		{
+			z->fault_to_send = CAN_FAULT_UDP_LOST;
+		}
+		z->state = ZONE_LOCAL_FAIL;
+		return;
+	}
+	// self test cleared and UDP stream is back
+	if (z->state == ZONE_LOCAL_FAIL && !z->self_test && in->udp_fresh)
+	{
+		z->state = ZONE_ERROR;
+		return;
+	}
+	// peer_failed, isolated, or a FAULT arrived (zone_on_fault)
+	if (z->state == ZONE_NORMAL && (in->peer_failed || in->isolated))
+	{
+		z->state = ZONE_ERROR;
+		return;
+	}
+	// peers_alive && udp_fresh && no peer_failed && not isolated && no recent FAULT
+	if (z->state == ZONE_ERROR && in->peers_alive && in->udp_fresh && !in->peer_failed && !in->isolated && !fault_active(z, in, now_us))
+	{
+		z->state = ZONE_NORMAL;
+		return;
+	}
 }
 
 void zone_on_fault(struct zone *z, const struct can_fault *f, uint64_t now_us)
 {
-	/* TODO(cockpit): remember that zone f->zone reported f->reason at now_us,
-	 * and go to ERROR from NORMAL (R3). Don't react to our own zone number.
-	 */
-	(void)z;
-	(void)f;
-	(void)now_us;
+	if (f->zone == CAN_ZONE_N1)
+	{
+		return;
+	}
+	z->fault_reason[f->zone] = f->reason;
+	z->fault_us[f->zone] = now_us;
+	if (z->state == ZONE_NORMAL)
+	{
+		z->state = ZONE_ERROR;
+	}
 }

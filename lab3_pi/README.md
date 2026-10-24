@@ -79,13 +79,13 @@ error state (ERR LED on) and sends no BLINK messages.
 Each of these has a `TODO(cockpit)` comment in the code that spells out the
 exact rule.
 
-1. **`health.c`: `health_update()`**. Turn the "last heard" times into:
+DONE 1. **`health.c`: `health_update()`**. Turn the "last heard" times into:
    - which zones are alive (heard on at least one bus recently)
    - which zones have failed (3 heartbeats missed on both buses)
    - which bus is degraded (nothing from anyone on it for 60 ms while the
      other bus still works); this drives the DEG LEDs
    - whether the Pi is cut off from both buses entirely
-2. **`zone.c`: `zone_update()` and `zone_on_fault()`**. The test button is
+DONE 2. **`zone.c`: `zone_update()` and `zone_on_fault()`**. The test button is
    already ported from Lab 2 (`on_test_button()`, from
    `lab2_stm32/src/sys_state.c`) and sets `z->self_test`. Still needed: the
    state machine itself. Start in ERROR; go to NORMAL once both STM32
@@ -93,7 +93,7 @@ exact rule.
    or reports a fault; LOCAL_FAIL while `self_test` is set or there has been
    no wheel data for 100 ms. A failed cockpit stops sending everything,
    heartbeat included.
-3. **`blinker.c`: the blink clock**. The Lab 2 state machine is already ported
+DONE 3. **`blinker.c`: the blink clock**. The Lab 2 state machine is already ported
    (`determine_next_state()`, `wheel_range()` and the event building, from
    `lab2_stm32/src/blinker.c`), so `b->mode` is correct. Still needed: every
    500 ms (250 ms for hazards) flip the lamps and return true so `main.c`
