@@ -62,18 +62,10 @@ static inline bool zone_transmitting(const struct zone *z)
 	return z->state != ZONE_LOCAL_FAIL;
 }
 
-/* HB_N1 byte 1. LOCAL_FAIL never reaches the bus (no heartbeat), but map it
- * for completeness. */
+/* HB_N1 byte 1. */
 static inline uint8_t zone_wire_state(const struct zone *z)
 {
-	switch (z->state) {
-	case ZONE_NORMAL:
-		return CAN_STATE_NORMAL;
-	case ZONE_LOCAL_FAIL:
-		return CAN_STATE_LOCAL_FAIL;
-	default:
-		return CAN_STATE_ERROR;
-	}
+	return z->state == ZONE_NORMAL ? CAN_STATE_NORMAL : CAN_STATE_ERROR;
 }
 
 #endif /* ZONE_H */
