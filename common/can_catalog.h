@@ -7,9 +7,9 @@
  *
  * Every message uses a standard 11-bit ID, always has 8 data bytes, and is
  * sent on both CAN A and CAN B. The first data byte always holds a 4-bit
- * sequence counter in its low bits. The top 4 bits are unused (send 0). Any
- * value bigger than one byte is stored low byte first, and bytes a message
- * doesn't use are sent as 0.
+ * sequence counter in its low bits and flags in its top 4 bits (only
+ * CAN_FLAG_RELAYED is defined; send the rest as 0). Any value bigger than one
+ * byte is stored low byte first, and bytes a message doesn't use are sent as 0.
  *
  * How to send a message:
  *   Keep a separate sequence counter for each message ID you send. Pack the
@@ -67,6 +67,10 @@ static inline uint8_t can_hb_zone(uint16_t id)
  */
 #define CAN_SEQ_MASK 0x0F
 
+/* Byte 0 flag bits [7:4]. A relay node sets RELAYED on the copy it forwards;
+ * a frame with RELAYED set is never relayed again. Bits 5-7 are sent as 0. */
+#define CAN_FLAG_RELAYED 0x10
+
 // returns the uint8_t sequence counter from a can frame
 static inline uint8_t can_seq(const uint8_t *d)
 {
@@ -117,8 +121,10 @@ static inline uint8_t can_crc8(const uint8_t *buf, int len)
  *              brake always wins over the throttle.
  *   byte 5     which wheel buttons are pressed (for logging; the blinkers are
  *              controlled by BLINK messages, not by these bits)
- *   byte 6     unused
- *   byte 7     CRC of bytes 0 through 6 (only used by CTRL)
+ *   byte 6     CRC of bytes 0 through 5 (only used by CTRL), computed with the
+ *              byte 0 flag bits treated as 0, so a relay can set RELAYED
+ *              without recomputing it
+ *   byte 7     unused
  */
 #define CAN_BTN_LEFT  0x01
 #define CAN_BTN_RIGHT 0x02
@@ -132,6 +138,14 @@ struct can_ctrl {
 	uint8_t buttons;
 };
 
+/* CTRL CRC: bytes 0-5 with the byte 0 flag bits cleared. */
+static inline uint8_t can_ctrl_crc(const uint8_t d[CAN_DLC])
+{
+	uint8_t buf[6] = {(uint8_t)(d[0] & CAN_SEQ_MASK), d[1], d[2], d[3], d[4], d[5]};
+
+	return can_crc8(buf, 6);
+}
+
 // packs d with the ctlr can frame
 static inline void can_pack_ctrl(uint8_t d[CAN_DLC], uint8_t seq, const struct can_ctrl *c)
 {
@@ -141,8 +155,8 @@ static inline void can_pack_ctrl(uint8_t d[CAN_DLC], uint8_t seq, const struct c
 	d[3] = c->throttle;
 	d[4] = c->brake;
 	d[5] = c->buttons;
-	d[6] = 0;
-	d[7] = can_crc8(d, 7);
+	d[6] = can_ctrl_crc(d);
+	d[7] = 0;
 }
 
 /*
@@ -156,7 +170,7 @@ static inline enum can_check can_unpack_ctrl(const uint8_t d[CAN_DLC], struct ca
 	c->throttle = d[3];
 	c->brake = d[4];
 	c->buttons = d[5];
-	if (can_crc8(d, 7) != d[7]) {
+	if (can_ctrl_crc(d) != d[6]) {
 		return CAN_MALFORMED;
 	}
 	if (c->steer < -100 || c->steer > 100 || c->throttle > 100 || c->brake > 100 ||
@@ -184,10 +198,10 @@ static inline enum can_check can_unpack_ctrl(const uint8_t d[CAN_DLC], struct ca
  * the counter against that zone's filter.
  */
 #define CAN_FAULT_SELF_TEST 1 /* the zone's test button was pressed once */
-#define CAN_FAULT_HB_LOST   2 /* another zone missed 3 heartbeats on both buses */
-#define CAN_FAULT_BAD_VALUE 3 /* received a value outside its allowed range */
-#define CAN_FAULT_MALFORMED 4 /* received a broken message */
-#define CAN_FAULT_UDP_LOST  5 /* Pi only: no wheel data for 100 ms */
+#define CAN_FAULT_BAD_VALUE 2 /* received a CTRL value outside its allowed range */
+#define CAN_FAULT_MALFORMED 3 /* received a CTRL with a bad CRC */
+#define CAN_FAULT_HB_LOST   4 /* another zone missed 3 heartbeats on both buses */
+#define CAN_FAULT_UDP_LOST  5 /* Pi only: no wheel data for 100 ms (not in the design doc yet) */
 #define CAN_FAULT_MAX       5
 
 struct can_fault {
@@ -218,18 +232,20 @@ static inline enum can_check can_unpack_fault(const uint8_t d[CAN_DLC], struct c
  * Heartbeat (HB_N1, HB_N2, HB_N3): "I'm alive," sent every 20 ms.
  *
  *   byte 0     sequence counter
- *   byte 1     the sender's state: normal or error
- *   byte 2     the sender's bus health: bit 0 set means bus A is degraded,
- *              bit 1 set means bus B is degraded
+ *   byte 1     the sender's state: error, normal or local fail
+ *   byte 2     the sender's bus health: bit 0 set means bus A is ok,
+ *              bit 1 set means bus B is ok (0x03 = both healthy)
  *
- * The ID tells you who sent it. A zone that has failed simply stops sending
- * heartbeats, so there's no "failed" value here; going quiet is the signal.
+ * The ID tells you who sent it. A zone in local fail stops sending heartbeats,
+ * so going quiet is the real signal; CAN_STATE_LOCAL_FAIL is defined to match
+ * the catalog but should not normally appear on the bus.
  */
-#define CAN_STATE_ERROR  0 /* in the system-wide error state (also right after power-up) */
-#define CAN_STATE_NORMAL 1
+#define CAN_STATE_ERROR      0 /* in the system-wide error state (also right after power-up) */
+#define CAN_STATE_NORMAL     1
+#define CAN_STATE_LOCAL_FAIL 2 /* test button pressed */
 
-#define CAN_HEALTH_A_DEGRADED 0x01
-#define CAN_HEALTH_B_DEGRADED 0x02
+#define CAN_HEALTH_A_OK 0x01
+#define CAN_HEALTH_B_OK 0x02
 
 struct can_hb {
 	uint8_t state;
@@ -248,8 +264,8 @@ static inline enum can_check can_unpack_hb(const uint8_t d[CAN_DLC], struct can_
 {
 	h->state = d[1];
 	h->health = d[2];
-	if (h->state > CAN_STATE_NORMAL ||
-	    (h->health & ~(CAN_HEALTH_A_DEGRADED | CAN_HEALTH_B_DEGRADED)) != 0) {
+	if (h->state > CAN_STATE_LOCAL_FAIL ||
+	    (h->health & ~(CAN_HEALTH_A_OK | CAN_HEALTH_B_OK)) != 0) {
 		return CAN_MALFORMED;
 	}
 	return CAN_OK;

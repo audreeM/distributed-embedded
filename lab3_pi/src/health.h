@@ -39,7 +39,7 @@ void health_on_heartbeat(struct health *h, uint8_t zone, const struct can_hb *hb
 /* Recompute the outputs. Called every TICK_MS. */
 void health_update(struct health *h, uint64_t now_us);
 
-/* HB_N1 byte 2 (CAN_HEALTH_*) from degraded[]. */
+/* HB_N1 byte 2 (CAN_HEALTH_*_OK) from degraded[] and isolated. */
 uint8_t health_bits(const struct health *h);
 
 #endif /* HEALTH_H */

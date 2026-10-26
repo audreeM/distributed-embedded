@@ -11,7 +11,8 @@ BUSES=${2:-"can0 can1"}
 
 s=0
 while true; do
-	d=0$(printf %X $s)01000000000000
+	# byte 1 = 01 (NORMAL), byte 2 = 03 (both buses ok)
+	d=0$(printf %X $s)0103000000000000
 	for b in $BUSES; do
 		for id in $IDS; do
 			cansend "$b" "$id#$d"

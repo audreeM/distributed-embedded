@@ -112,7 +112,7 @@ can fake the other zones from a second terminal:
 
 ```bash
 # fake the steering zone's heartbeat on bus A, every 20 ms
-s=0; while true; do cansend can0 101#0$(printf %X $s)01000000000000; s=$(((s+1)%16)); sleep 0.02; done
+s=0; while true; do cansend can0 101#0$(printf %X $s)0103000000000000; s=$(((s+1)%16)); sleep 0.02; done
 
 # fake a FAULT from the drivetrain zone (zone 3, reason 1 = test button)
 cansend can0 020#0003010000000000

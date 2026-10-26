@@ -83,6 +83,11 @@ void health_update(struct health *h, uint64_t now_us)
 
 uint8_t health_bits(const struct health *h)
 {
-	return (h->degraded[BUS_A] ? CAN_HEALTH_A_DEGRADED : 0) |
-		   (h->degraded[BUS_B] ? CAN_HEALTH_B_DEGRADED : 0);
+	/* A bus is ok unless it is degraded or we're cut off from both. */
+	if (h->isolated)
+	{
+		return 0;
+	}
+	return (h->degraded[BUS_A] ? 0 : CAN_HEALTH_A_OK) |
+		   (h->degraded[BUS_B] ? 0 : CAN_HEALTH_B_OK);
 }
