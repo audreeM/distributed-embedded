@@ -1,0 +1,75 @@
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+	chosen {
+		zephyr,canbus = &can_a;
+	};
+
+	aliases {
+		/delete-property/ led0;
+		/delete-property/ pwm-led0;
+		can-a = &can_a;
+		can-b = &can_b;
+	};
+
+	zephyr,user {
+		pwms = <&servo_pwm 3 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
+		/* front blinkers: 0 = FL (left), 1 = FR (right) */
+		blink-gpios = <&gpioa 15 GPIO_ACTIVE_HIGH>, <&gpioa 1 GPIO_ACTIVE_HIGH>;
+		canrxa-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
+		canrxb-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
+		cantxa-gpios = <&gpioc 10 GPIO_ACTIVE_HIGH>;
+		cantxb-gpios = <&gpioc 11 GPIO_ACTIVE_HIGH>;
+		dega-gpios = <&gpioa 8 GPIO_ACTIVE_HIGH>;
+		degb-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
+		relaytx-gpios = <&gpioc 12 GPIO_ACTIVE_HIGH>;
+		err-gpios = <&gpioc 0 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+&{/pwmleds} { status = "disabled"; };
+&usart1 { status = "disabled"; };
+&i2c1 { status = "disabled"; };
+&i2c3 { status = "disabled"; };
+
+/* R4.5: independent watchdog */
+&iwdg { status = "okay"; };
+
+/* Servo PWM: TIM2 channel 3 on PB10 (from lab2_stm32). */
+&timers2 {
+	status = "okay";
+	st,prescaler = <0>;
+	servo_pwm: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim2_ch3_pb10>;
+		pinctrl-names = "default";
+	};
+};
+
+&spi1 {
+	status = "okay";
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>,
+		   <&gpioc 7 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+
+	can_a: mcp2515@0 {
+		compatible = "microchip,mcp2515";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		int-gpios = <&gpioa 10 GPIO_ACTIVE_LOW>;
+		osc-freq = <16000000>;	/* must match the crystal on the module */
+		bitrate = <500000>;
+		status = "okay";
+	};
+
+	can_b: mcp2515@1 {
+		compatible = "microchip,mcp2515";
+		reg = <1>;
+		spi-max-frequency = <10000000>;
+		int-gpios = <&gpiob 5 GPIO_ACTIVE_LOW>;
+		osc-freq = <16000000>;	/* must match the crystal on the module */
+		bitrate = <500000>;
+		status = "okay";
+	};
+};
