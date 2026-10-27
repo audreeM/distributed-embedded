@@ -1,0 +1,99 @@
+/*
+ * SPI1: SCK [PA5], MOSI [PA7], MISO [PA6] check
+ * CAN A: CS [PB6], INT [PA10] ; CAN B: CS [PC7], INT [PB5] check
+ * Blinker: RL [PB3], RR [PB4]
+ * ENA [PA8]		ENB [PA9]
+ * IN1 [PC9] IN2 [PC8] IN3 [PC11] IN4 [PB10] 
+ * Test Button: B1 [PC13], SW0
+ * Test Points
+ * CAN_RX_A [PA0]	CAN_RX_B [PA1]
+ * CAN_TX_A [PA4]	CAN_TX_B [PB0]
+ * DEG_A [PC1]		DEG_B [PC0]
+ * PWM_SET [PB13]	PWM_OUT [PA8]
+ * DIR_A [PC8]	    ERR [PB9]
+ */
+
+#include <zephyr/dt-bindings/pwm/pwm.h>
+
+/ {
+
+	aliases {
+		/delete-property/ led0;
+		/delete-property/ pwm-led0;
+		can-a = &can_a;
+		can-b = &can_b;
+	};
+	
+	zephyr,user {
+		blink-gpios = <&gpiob 3 GPIO_ACTIVE_HIGH>, <&gpiob 4 GPIO_ACTIVE_HIGH>;
+		canrxa-gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
+		canrxb-gpios = <&gpioa 1 GPIO_ACTIVE_HIGH>;
+		cantxa-gpios = <&gpioa 4 GPIO_ACTIVE_HIGH>;
+		cantxb-gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
+		dega-gpios = <&gpioc 1 GPIO_ACTIVE_HIGH>;
+		degb-gpios = <&gpioc 0 GPIO_ACTIVE_HIGH>;
+		pwmset-gpios = <&gpiob 13 GPIO_ACTIVE_HIGH>;
+		err-gpios = <&gpiob 9 GPIO_ACTIVE_HIGH>;
+
+		/* 20 kHz motor PWM */
+		pwms = <&motor_pwm 1 PWM_USEC(50) PWM_POLARITY_NORMAL>,
+		       <&motor_pwm 2 PWM_USEC(50) PWM_POLARITY_NORMAL>;
+
+		/* IN1, IN2 (left), IN3, IN4 (right) */
+		motor-dir-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>,
+				  <&gpioc 8 GPIO_ACTIVE_HIGH>,
+				  <&gpioc 11 GPIO_ACTIVE_HIGH>,
+				  <&gpiob 10 GPIO_ACTIVE_HIGH>;
+	};
+};
+
+/* The board file puts these on pins we need - turn them off. */
+&usart1 { status = "disabled"; };  /* PB6/PB7 */
+&i2c3   { status = "disabled"; };  /* PA8 */
+&i2c1   { status = "disabled"; };  /* PB8/PB9 */
+&spi2   { status = "disabled"; };  /* PB8/PB9 */
+&spi3   { status = "disabled"; };  /* PB8/PB9 */
+&green_led_2   { status = "disabled"; };
+&green_pwm_led { status = "disabled"; };
+&pwm2          { status = "disabled"; };
+
+
+&iwdg	{ status = "okay"; };
+
+&timers1 {
+	status = "okay";
+	st,prescaler = <0>;
+	motor_pwm: pwm {
+		status = "okay";
+		pinctrl-0 = <&tim1_ch1_pa8 &tim1_ch2_pa9>;
+		pinctrl-names = "default";
+	};
+};
+
+&spi1 {
+	status = "okay";
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>,
+		   <&gpioc 7 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+
+	can_a: mcp2515@0 {
+		compatible = "microchip,mcp2515";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		int-gpios = <&gpioa 10 GPIO_ACTIVE_LOW>;
+		osc-freq = <16000000>;	/* must match the crystal on the module */
+		bitrate = <500000>;
+		status = "okay";
+	};
+
+	can_b: mcp2515@1 {
+		compatible = "microchip,mcp2515";
+		reg = <1>;
+		spi-max-frequency = <10000000>;
+		int-gpios = <&gpiob 5 GPIO_ACTIVE_LOW>;
+		osc-freq = <16000000>;	/* must match the crystal on the module */
+		bitrate = <500000>;
+		status = "okay";
+	};
+};
