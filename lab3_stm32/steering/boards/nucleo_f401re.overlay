@@ -15,15 +15,19 @@
 	zephyr,user {
 		pwms = <&servo_pwm 3 PWM_MSEC(20) PWM_POLARITY_NORMAL>;
 		/* front blinkers: 0 = FL (left), 1 = FR (right) */
-		blink-gpios = <&gpioa 15 GPIO_ACTIVE_HIGH>, <&gpioa 1 GPIO_ACTIVE_HIGH>;
-		canrxa-gpios = <&gpioc 8 GPIO_ACTIVE_HIGH>;
-		canrxb-gpios = <&gpioc 9 GPIO_ACTIVE_HIGH>;
-		cantxa-gpios = <&gpioc 10 GPIO_ACTIVE_HIGH>;
-		cantxb-gpios = <&gpioc 11 GPIO_ACTIVE_HIGH>;
-		dega-gpios = <&gpioa 8 GPIO_ACTIVE_HIGH>;
-		degb-gpios = <&gpioa 9 GPIO_ACTIVE_HIGH>;
-		relaytx-gpios = <&gpioc 12 GPIO_ACTIVE_HIGH>;
-		err-gpios = <&gpioc 0 GPIO_ACTIVE_HIGH>;
+		/* Pins as wired on the bench (Dual-CAN Bench Wiring page, N2 column):
+		 * row 3 CAN_RX_A PA0, 4 CAN_RX_B PA1, 5 CAN_TX_A PA4, 6 CAN_TX_B PB0,
+		 * 7 DEG_A PC1, 8 DEG_B PC0, 9 SRV PB10, 10 FL PA8, 11 FR PA9,
+		 * 12 RELAY_TX PB3, 13 ERR PB4. */
+		blink-gpios = <&gpioa 8 GPIO_ACTIVE_HIGH>, <&gpioa 9 GPIO_ACTIVE_HIGH>;
+		canrxa-gpios = <&gpioa 0 GPIO_ACTIVE_HIGH>;
+		canrxb-gpios = <&gpioa 1 GPIO_ACTIVE_HIGH>;
+		cantxa-gpios = <&gpioa 4 GPIO_ACTIVE_HIGH>;
+		cantxb-gpios = <&gpiob 0 GPIO_ACTIVE_HIGH>;
+		dega-gpios = <&gpioc 1 GPIO_ACTIVE_HIGH>;
+		degb-gpios = <&gpioc 0 GPIO_ACTIVE_HIGH>;
+		relaytx-gpios = <&gpiob 3 GPIO_ACTIVE_HIGH>;
+		err-gpios = <&gpiob 4 GPIO_ACTIVE_HIGH>;
 	};
 };
 

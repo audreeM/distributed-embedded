@@ -17,6 +17,8 @@ static const struct device *const devs[BUS_COUNT] = {
 static const enum tp tp_rx[BUS_COUNT] = { TP_CAN_RX_A, TP_CAN_RX_B };
 static const enum tp tp_tx[BUS_COUNT] = { TP_CAN_TX_A, TP_CAN_TX_B };
 
+#define TX_WAIT K_MSEC(2)
+
 static bool up[BUS_COUNT];
 static atomic_t tx_ok[BUS_COUNT], tx_fail[BUS_COUNT], rx_cnt[BUS_COUNT], rx_drop;
 
@@ -75,8 +77,16 @@ int canbus_send_on(int bus, uint16_t id, const uint8_t d[CAN_DLC])
 	}
 	memcpy(f.data, d, CAN_DLC);
 	tp_toggle(tp_tx[bus]);
-	/* K_NO_WAIT + callback: never blocks, so a dead bus can't hold up the other. */
-	err = can_send(devs[bus], &f, K_NO_WAIT, tx_cb, (void *)(uintptr_t)bus);
+	/*
+	 * Zephyr's MCP2515 driver uses only ONE transmit buffer, so a send while
+	 * the previous frame is still going out has to wait for it. K_NO_WAIT
+	 * dropped a frame every time two threads sent together (HB and FORCE line
+	 * up every 100 ms). One frame takes ~0.27 ms, < 2 ms worst case behind
+	 * higher-priority traffic, so wait up to TX_WAIT. On a bus nobody ACKs
+	 * (jumper pulled) the buffer never frees: each send there waits TX_WAIT
+	 * and fails, delaying the other bus's copy by at most that much.
+	 */
+	err = can_send(devs[bus], &f, TX_WAIT, tx_cb, (void *)(uintptr_t)bus);
 	if (err != 0) {
 		atomic_inc(&tx_fail[bus]);
 	}
