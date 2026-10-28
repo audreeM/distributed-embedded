@@ -57,7 +57,9 @@ static void steer_thread(void *p1, void *p2, void *p3)
 
 		k_spin_unlock(&lock, key);
 
-		int us = (ok && zone_state() == ZONE_NORMAL) ? steer_to_us(s) : SERVO_CENTER_US;
+		/* R3: keep tracking the wheel in the system error state; only center
+		 * when this zone is the failed one (LOCAL_FAIL). */
+		int us = (ok && zone_state() != ZONE_LOCAL_FAIL) ? steer_to_us(s) : SERVO_CENTER_US;
 
 		/* Only touch the timer when the value changes; the new width takes
 		 * effect at the start of the next 20 ms PWM period. */

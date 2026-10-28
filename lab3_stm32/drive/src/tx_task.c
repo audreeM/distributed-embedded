@@ -18,7 +18,7 @@ static void hb_tx_thread(void *p1, void *p2, void *p3)
 			uint8_t d[CAN_DLC];
 
 			can_pack_hb(d, seq, &hb);
-			canbus_send_both(CAN_ID_HB_N2, d, &seq);
+			canbus_send_both(CAN_ID_HB_N3, d, &seq);
 		}
 		zone_wdt_checkin(WDT_HB_TX);
 	}

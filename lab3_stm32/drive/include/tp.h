@@ -9,9 +9,8 @@ enum tp {
 	TP_CAN_TX_A, 
 	TP_CAN_TX_B, 
 	TP_DEG_A,    
-	TP_DEG_B,    
-	TP_RELAY_TX, 
-	TP_ERR,      
+	TP_DEG_B,
+	TP_ERR,      /* N3 has no RELAY_TX: only N2 relays */
 	TP_COUNT,
 };
 
