@@ -31,7 +31,7 @@ static void relay_thread(void *p1, void *p2, void *p3)
 
 	for (;;) {
 		k_msgq_get(&relay_q, &it, K_FOREVER);
-		tp_toggle(TP_RELAY_TX);
+		// tp_toggle(TP_RELAY_TX);
 		if (canbus_send_on(it.to_bus, it.frame.id, it.frame.data) == 0) {
 			atomic_inc(&relayed);
 		}
