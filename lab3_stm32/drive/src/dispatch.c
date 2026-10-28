@@ -3,6 +3,7 @@
 #include "blink.h"
 #include "canbus.h"
 #include "config.h"
+#include "relay.h"
 #include "motor.h"
 #include "zone.h"
 
@@ -57,6 +58,12 @@ static void dispatch_thread(void *p1, void *p2, void *p3)
 		zone_on_frame(it.bus, sender, can_hb_zone(id) != 0);
 		if (filt == NULL || !can_seq_accept(filt, can_seq(d), now)) {
 			continue; 
+		}
+
+		int to_bus;
+
+		if (zone_relay_to(sender, it.bus, &to_bus)) {
+			relay_queue(&it.frame, to_bus);
 		}
 
 		switch (id) {

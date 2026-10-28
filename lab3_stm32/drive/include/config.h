@@ -6,11 +6,12 @@
 
 #define PRIO_DISPATCH 1 
 #define PRIO_MOTOR    2
-#define PRIO_BLINK_R  3 
-#define PRIO_TEST_BTN 4 
-#define PRIO_PID      5
-#define PRIO_HB_MON   6 
-#define PRIO_HB_TX    7 
+#define PRIO_RELAY    3
+#define PRIO_BLINK_R  4 
+#define PRIO_TEST_BTN 5 
+#define PRIO_PID      6
+#define PRIO_HB_MON   7 
+#define PRIO_HB_TX    8 
 
 
 #define HB_PERIOD_MS      20  

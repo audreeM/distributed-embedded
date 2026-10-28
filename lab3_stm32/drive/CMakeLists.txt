@@ -12,6 +12,7 @@ target_sources(app PRIVATE
 	src/pid.c
 	src/motor.c
 	src/main.c
+	src/relay.c
 )
 
 target_include_directories(app PRIVATE include ../../common)

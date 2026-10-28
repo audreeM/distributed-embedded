@@ -4,6 +4,7 @@
 #include "blink.h"
 #include "canbus.h"
 #include "config.h"
+#include "relay.h"
 #include "motor.h"
 #include "pid.h"
 #include "tp.h"
@@ -54,6 +55,7 @@ int main(void)
 	zone_init();
 	motor_init();            /* starts the high-priority motor thread */
 	pid_init();              /* starts the lower-priority PID thread  */
+	relay_init();
 	dispatch_init();
 	if (canbus_init() < 0) {
 		printk("no CAN module came up\n");

@@ -152,23 +152,23 @@ void zone_on_fault(const struct can_fault *f)
 	}
 }
 
-// bool zone_relay_to(uint8_t sender, int from_bus, int *to_bus)
-// {
-// 	int other = from_bus == BUS_A ? BUS_B : BUS_A;
-// 	uint32_t now = k_uptime_get_32();
-// 	bool relay;
+bool zone_relay_to(uint8_t sender, int from_bus, int *to_bus)
+{
+	int other = from_bus == BUS_A ? BUS_B : BUS_A;
+	uint32_t now = k_uptime_get_32();
+	bool relay;
 
-// 	if (sender == 0 || sender >= ZONES || zone_state() == ZONE_LOCAL_FAIL) {
-// 		return false;
-// 	}
-// 	k_spinlock_key_t key = k_spin_lock(&lock);
+	if (sender == 0 || sender >= ZONES || zone_state() == ZONE_LOCAL_FAIL) {
+		return false;
+	}
+	k_spinlock_key_t key = k_spin_lock(&lock);
 
-// 	relay = silent_ms(z.last_seen_ms[sender][other], now) >= RELAY_AFTER_MS &&
-// 		silent_ms(z.last_rx_ms[other], now) < DEGRADED_MS;
-// 	k_spin_unlock(&lock, key);
-// 	*to_bus = other;
-// 	return relay;
-// }
+	relay = silent_ms(z.last_seen_ms[sender][other], now) >= RELAY_AFTER_MS &&
+		silent_ms(z.last_rx_ms[other], now) < DEGRADED_MS;
+	k_spin_unlock(&lock, key);
+	*to_bus = other;
+	return relay;
+}
 
 bool zone_blink_master_alive(void)
 {
