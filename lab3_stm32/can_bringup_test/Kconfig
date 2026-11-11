@@ -1,0 +1,7 @@
+# Lab 3 Part 1 bring-up: which node this board is (2 = steering, 3 = drivetrain).
+# The test frame ID is 0x7F0 + node, so the two Nucleos show up separately in candump.
+config BRINGUP_NODE_ID
+	int "Node number (2 or 3)"
+	default 2
+
+source "Kconfig.zephyr"

@@ -1,0 +1,57 @@
+/*
+ * Lab 3 dual CAN on the handout pins (two XIAO MCP2515 modules on SPI1).
+ *   SCK  D13 PA5  -> module D8 (both modules)
+ *   MOSI D11 PA7  -> module D10 (both)  NOTE: handout Fig. 2 has D9/D10 swapped;
+ *   MISO D12 PA6  <- module D9  (both)        real XIAO pinout is D9 MISO, D10 MOSI
+ *   CAN A: CS D10 PB6, INT D2 PA10      CAN B: CS D9 PC7, INT D4 PB5
+ *
+ * Board defaults that sit on those pins are turned off below:
+ *   LD2 (led0) and the TIM2 PWM LED are on PA5 = SCK, USART1 TX is on PB6,
+ *   I2C1 (PB8/PB9) and I2C3 (PA8/PC9) are on later test-point pins.
+ */
+/ {
+	chosen {
+		zephyr,canbus = &can_a;
+	};
+
+	aliases {
+		/delete-property/ led0;
+		/delete-property/ pwm-led0;
+		can-a = &can_a;
+		can-b = &can_b;
+	};
+};
+
+&{/pwmleds} { status = "disabled"; };
+&timers2 { status = "disabled"; };
+&usart1 { status = "disabled"; };
+&i2c1 { status = "disabled"; };
+&i2c3 { status = "disabled"; };
+
+&spi1 {
+	status = "okay";
+	pinctrl-0 = <&spi1_sck_pa5 &spi1_miso_pa6 &spi1_mosi_pa7>;
+	pinctrl-names = "default";
+	cs-gpios = <&gpiob 6 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>,
+		   <&gpioc 7 (GPIO_ACTIVE_LOW | GPIO_PULL_UP)>;
+
+	can_a: mcp2515@0 {
+		compatible = "microchip,mcp2515";
+		reg = <0>;
+		spi-max-frequency = <10000000>;	/* MCP2515 max; SPI1 divider gives 84/16 = 5.25 MHz */
+		int-gpios = <&gpioa 10 GPIO_ACTIVE_LOW>;
+		osc-freq = <16000000>;	/* must match the crystal on the module */
+		bitrate = <500000>;
+		status = "okay";
+	};
+
+	can_b: mcp2515@1 {
+		compatible = "microchip,mcp2515";
+		reg = <1>;
+		spi-max-frequency = <10000000>;	/* MCP2515 max; SPI1 divider gives 84/16 = 5.25 MHz */
+		int-gpios = <&gpiob 5 GPIO_ACTIVE_LOW>;
+		osc-freq = <16000000>;	/* must match the crystal on the module */
+		bitrate = <500000>;
+		status = "okay";
+	};
+};
