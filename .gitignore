@@ -1,3 +1,7 @@
 .vscode/
 .vscode/
 lab3_stm32/steering/build/
+build*/
+common/raft/sim/raft_sim
+common/raft/sim/raft_sim_asan
+*.dSYM/
