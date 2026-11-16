@@ -3,8 +3,8 @@ CC      ?= cc
 CFLAGS  ?= -std=c11 -O2 -g -Wall -Wextra
 CFLAGS  += -I.. -I../..
 
-SRCS := raft_sim.c ../raft.c ../raft_sm.c
-HDRS := ../raft.h ../raft_msg.h ../raft_sm.h ../raft_config.h ../../can_catalog.h
+SRCS := raft_sim.c ../raft.c ../raft_sm.c ../raft_client.c
+HDRS := ../raft.h ../raft_msg.h ../raft_sm.h ../raft_config.h ../raft_client.h ../../can_catalog.h
 
 raft_sim: $(SRCS) $(HDRS)
 	$(CC) $(CFLAGS) -o $@ $(SRCS)

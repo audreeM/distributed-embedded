@@ -261,6 +261,13 @@ static inline enum can_check can_unpack_hb(const uint8_t d[CAN_DLC], struct can_
  *   byte 0     sequence counter
  *   byte 1     mode: off, left, right or hazard
  *   byte 2     1 means the lamps turn on now, 0 means they turn off now
+ *   bytes 3-6  (lab 5) global time in ms when this pattern starts, u32. The
+ *              lamps are on for the first half period after start, off for
+ *              the next, and so on. Every node computes the edges from its
+ *              own global time, so they line up even if this frame was
+ *              relayed and arrived late. The Pi sets it ~20 ms in the future.
+ *
+ * Lab 5: the STM32s ignore byte 2 and use bytes 3-6 instead.
  *
  * The Pi keeps the blink timing and sends this every time the lamps should
  * switch. The two STMs don't run their own blink timers; they just set their
@@ -282,6 +289,7 @@ static inline enum can_check can_unpack_hb(const uint8_t d[CAN_DLC], struct can_
 struct can_blink {
 	uint8_t mode;
 	uint8_t phase;
+	uint32_t start_ms; /* lab 5: global time the pattern starts */
 };
 
 static inline void can_pack_blink(uint8_t d[CAN_DLC], uint8_t seq, const struct can_blink *b)
@@ -289,13 +297,19 @@ static inline void can_pack_blink(uint8_t d[CAN_DLC], uint8_t seq, const struct 
 	d[0] = seq & CAN_SEQ_MASK;
 	d[1] = b->mode;
 	d[2] = b->phase;
-	d[3] = d[4] = d[5] = d[6] = d[7] = 0;
+	d[3] = (uint8_t)b->start_ms;
+	d[4] = (uint8_t)(b->start_ms >> 8);
+	d[5] = (uint8_t)(b->start_ms >> 16);
+	d[6] = (uint8_t)(b->start_ms >> 24);
+	d[7] = 0;
 }
 
 static inline enum can_check can_unpack_blink(const uint8_t d[CAN_DLC], struct can_blink *b)
 {
 	b->mode = d[1];
 	b->phase = d[2];
+	b->start_ms = (uint32_t)d[3] | ((uint32_t)d[4] << 8) | ((uint32_t)d[5] << 16) |
+		      ((uint32_t)d[6] << 24);
 	return (b->mode <= CAN_BLINK_HAZARD && b->phase <= 1) ? CAN_OK : CAN_MALFORMED;
 }
 

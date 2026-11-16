@@ -5,3 +5,7 @@ build*/
 common/raft/sim/raft_sim
 common/raft/sim/raft_sim_asan
 *.dSYM/
+common/timesync/sim/ts_sim
+lab5_pi/src/cockpit
+lab5_pi/src/raft_state.txt*
+lab5_pi/src/raft_log.txt

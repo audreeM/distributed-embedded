@@ -105,13 +105,14 @@ static void save_term_and_vote(struct raft_node *n)
 }
 
 /*
- * In default leader mode, followers don't run their election timer until
- * they've heard from the leader at least once. Otherwise the STM32s would
- * hold an election while the Pi is still booting.
+ * Followers don't run their election timer until they've heard from a leader
+ * at least once. Otherwise the STM32s would hold an election while the Pi is
+ * still booting. With no default leader there is nobody to hear yet, so
+ * instead we wait until the node says everyone is up (raft_peers_ready).
  */
 static bool elections_allowed(const struct raft_node *n)
 {
-	return n->heard_leader || !is_valid_node(n->opts.default_leader);
+	return n->heard_leader || (!is_valid_node(n->opts.default_leader) && n->peers_ready);
 }
 
 /*
@@ -222,18 +223,16 @@ static void become_follower(struct raft_node *n, uint8_t term, uint8_t leader, u
 
 /*
  * Leader: sends the REF frame (term + cycle counter). This is the heartbeat
- * that tells followers we're alive. Time sync fills in bytes 4-7 with the
- * global time through the fill_ref hook right before it goes out.
+ * that tells followers we're alive. The time field goes out as "invalid"
+ * here; the node's send function fills in the real time for each bus
+ * (time sync, see raft_msg.h).
  */
 static void send_heartbeat(struct raft_node *n)
 {
-	struct raft_ref r = {.term = n->term, .cycle = n->ref_cycle++, .time_us = 0};
+	struct raft_ref r = {.term = n->term, .cycle = (uint8_t)n->ref_cycle++, .time_us = RAFT_TIME_INVALID};
 	uint8_t d[8];
 
 	raft_pack_ref(d, next_seq(n, TXS_REF), &r);
-	if (n->port->fill_ref) {
-		n->port->fill_ref(n->port->ctx, d);
-	}
 	send_frame(n, RAFT_ID_REF, d);
 }
 
@@ -682,23 +681,37 @@ static void handle_append_reply(struct raft_node *n, uint8_t s, const uint8_t d[
 }
 
 /*
- * EVENT from node s: its client is reporting a change. The leader adds it
- * to the log. A follower that knows who the leader is sends REDIRECT back.
+ * EVENT from node s: its client is reporting a change. The leader adds it to
+ * the log (whoever it was addressed to, dedup makes that safe). A follower
+ * the client mistook for the leader sends a REDIRECT back with the real one.
+ * Everyone else ignores it, since EVENT goes out on the bus to all nodes.
  */
 static void handle_client_report(struct raft_node *n, uint8_t s, const uint8_t d[8], uint64_t t)
 {
-	uint8_t entry = raft_unpack_event(d);
+	struct raft_event e;
 	uint8_t out[8];
 
-	(void)s;
 	(void)t;
+	raft_unpack_event(d, &e);
 	if (n->role == RAFT_LEADER) {
-		raft_leader_add_entry(n, entry);
-	} else if (n->leader != 0) {
-		struct raft_redirect r = {.term = n->term, .leader = n->leader};
+		raft_leader_add_entry(n, e.entry);
+	} else if (e.dest == n->id && n->leader != 0 && n->leader != n->id) {
+		struct raft_redirect r = {.term = n->term, .leader = n->leader, .client = s};
 
+		debug_print(n, "redirect N%u to N%u", s, n->leader);
 		raft_pack_redirect(out, next_seq(n, TXS_REDIRECT), &r);
 		send_frame(n, RAFT_ID_REDIRECT, out);
+	}
+}
+
+/* REDIRECT: we sent an EVENT to the wrong node. Remember the real leader for next time. */
+static void handle_redirect(struct raft_node *n, const uint8_t d[8])
+{
+	struct raft_redirect r;
+
+	raft_unpack_redirect(d, &r);
+	if (r.client == n->id && is_valid_node(r.leader)) {
+		n->leader_hint = r.leader;
 	}
 }
 
@@ -804,7 +817,8 @@ void raft_receive_frame(struct raft_node *n, uint16_t id, const uint8_t d[8])
 	case RAFT_MSG_APPEND:     handle_append_entries(n, s, d, t); break;
 	case RAFT_MSG_APPEND_ACK: handle_append_reply(n, s, d, t); break;
 	case RAFT_MSG_EVENT:      handle_client_report(n, s, d, t); break;
-	default:                  break; /* REDIRECT goes to the client, not raft */
+	case RAFT_MSG_REDIRECT:   handle_redirect(n, d); break;
+	default:                  break;
 	}
 	apply_committed_entries(n);
 }
@@ -843,18 +857,29 @@ int raft_leader_add_entry(struct raft_node *n, uint8_t entry)
 
 /*
  * For the client. If we're leader, add it to the log directly. Otherwise
- * send an EVENT frame and the leader adds it.
+ * send an EVENT frame addressed to whoever we think the leader is.
  */
 void raft_report_change(struct raft_node *n, uint8_t entry)
 {
+	struct raft_event e = {.entry = entry, .dest = n->leader ? n->leader : n->leader_hint};
 	uint8_t d[8];
 
 	if (n->role == RAFT_LEADER) {
 		raft_leader_add_entry(n, entry);
 		return;
 	}
-	raft_pack_event(d, next_seq(n, TXS_EVENT), entry);
+	raft_pack_event(d, next_seq(n, TXS_EVENT), &e);
 	send_frame(n, RAFT_ID_EVENT, d);
+}
+
+void raft_peers_ready(struct raft_node *n)
+{
+	if (n->peers_ready) {
+		return;
+	}
+	n->peers_ready = true;
+	/* start the election timer now, so every node starts it at about the same time */
+	n->deadline_us = get_time_us(n) + election_timeout(n);
 }
 
 /* Copies out the committed network graph. */

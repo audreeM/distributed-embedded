@@ -9,13 +9,20 @@
  * CAN arbitration.
  *
  *   ID           Name         From -> to           Bytes 1..7
- *   0x031-0x033  REF_Nx       leader -> all        term, cycle u16, global time us u32 (filled by time sync)
+ *   0x031-0x033  REF_Nx       leader -> all        term, cycle u8, global time us (40 bits, see below)
  *   0x041-0x043  REQ_VOTE_Nx  candidate -> all     term, last index u16, last term
  *   0x045-0x047  VOTE_Nx      voter -> candidate   term, candidate, granted
  *   0x051-0x053  APPEND_Nx    leader -> all        term, index u16, prev term, entry, entry term, commit back
  *   0x055-0x057  APPEND_ACK_Nx follower -> leader  term, success, match/hint u16
- *   0x061-0x063  EVENT_Nx     client -> leader     entry
- *   0x065-0x067  REDIRECT_Nx  follower -> client   term, leader
+ *   0x061-0x063  EVENT_Nx     client -> leader     entry, who it's for (leader the client thinks, 0 = any)
+ *   0x065-0x067  REDIRECT_Nx  follower -> client   term, leader, client
+ *
+ * REF time (time sync, two-step): bytes 3-7 hold the sender's global time,
+ * in us, when the PREVIOUS REF (cycle - 1) finished sending on this same bus.
+ * The sender only knows that after the frame is out, so it goes in the next
+ * one. Receivers timestamp each REF when it arrives and pair it up with the
+ * time in the next one. CAN delivers a frame to everyone at the same instant,
+ * so the network delay cancels out. RAFT_TIME_INVALID = no time yet.
  *
  * APPEND has one entry per frame. There's no room for a 16-bit commit index,
  * so "commit back" is how far behind the index field the leader's commit is:
@@ -48,6 +55,15 @@
 #define RAFT_SEQ_MASK     0x0F
 #define RAFT_FLAG_RELAYED 0x10 /* the relay sets this when it forwards a frame */
 #define RAFT_FLAG_PREVOTE 0x20 /* REQ_VOTE / VOTE: this is a pre-vote */
+
+/* REF time field: 40 bits of microseconds (wraps after 12.7 days). */
+#define RAFT_TIME_MASK    0xFFFFFFFFFFull
+#define RAFT_TIME_INVALID RAFT_TIME_MASK
+
+static inline bool raft_id_is_ref(uint16_t id)
+{
+	return id > RAFT_ID_REF && id <= RAFT_ID_REF + RAFT_N;
+}
 
 enum raft_msg {
 	RAFT_MSG_NONE = 0,
@@ -242,26 +258,43 @@ static inline void raft_hdr(uint8_t d[8], uint8_t seq, uint8_t flags)
 static inline uint8_t raft_seq(const uint8_t d[8]) { return d[0] & RAFT_SEQ_MASK; }
 static inline uint8_t raft_flags(const uint8_t d[8]) { return d[0] & ~RAFT_SEQ_MASK; }
 
+static inline void raft_put40(uint8_t *p, uint64_t v)
+{
+	for (int i = 0; i < 5; i++) {
+		p[i] = (uint8_t)(v >> (8 * i));
+	}
+}
+
+static inline uint64_t raft_get40(const uint8_t *p)
+{
+	uint64_t v = 0;
+
+	for (int i = 4; i >= 0; i--) {
+		v = (v << 8) | p[i];
+	}
+	return v;
+}
+
 /* REF is both the raft heartbeat and the time sync reference */
 struct raft_ref {
 	uint8_t term;
-	uint16_t cycle;   /* +1 every REF */
-	uint32_t time_us; /* leader's global time (low 32 bits), time sync fills this in */
+	uint8_t cycle;    /* +1 every REF (wraps) */
+	uint64_t time_us; /* global time the previous REF finished sending, see top of file */
 };
 
 static inline void raft_pack_ref(uint8_t d[8], uint8_t seq, const struct raft_ref *r)
 {
 	raft_hdr(d, seq, 0);
 	d[1] = r->term;
-	raft_put16(&d[2], r->cycle);
-	raft_put32(&d[4], r->time_us);
+	d[2] = r->cycle;
+	raft_put40(&d[3], r->time_us);
 }
 
 static inline void raft_unpack_ref(const uint8_t d[8], struct raft_ref *r)
 {
 	r->term = d[1];
-	r->cycle = raft_get16(&d[2]);
-	r->time_us = raft_get32(&d[4]);
+	r->cycle = d[2];
+	r->time_us = raft_get40(&d[3]);
 }
 
 struct raft_req_vote {
@@ -363,17 +396,28 @@ static inline void raft_unpack_ack(const uint8_t d[8], struct raft_ack *a)
 	a->match = raft_get16(&d[3]);
 }
 
-static inline void raft_pack_event(uint8_t d[8], uint8_t seq, uint8_t entry)
+struct raft_event {
+	uint8_t entry;
+	uint8_t dest; /* node the client thinks is leader, 0 = don't know */
+};
+
+static inline void raft_pack_event(uint8_t d[8], uint8_t seq, const struct raft_event *e)
 {
 	raft_hdr(d, seq, 0);
-	d[1] = entry;
+	d[1] = e->entry;
+	d[2] = e->dest;
 }
 
-static inline uint8_t raft_unpack_event(const uint8_t d[8]) { return d[1]; }
+static inline void raft_unpack_event(const uint8_t d[8], struct raft_event *e)
+{
+	e->entry = d[1];
+	e->dest = d[2];
+}
 
 struct raft_redirect {
 	uint8_t term;
-	uint8_t leader;
+	uint8_t leader; /* the real leader */
+	uint8_t client; /* who the redirect is for */
 };
 
 static inline void raft_pack_redirect(uint8_t d[8], uint8_t seq, const struct raft_redirect *r)
@@ -381,12 +425,14 @@ static inline void raft_pack_redirect(uint8_t d[8], uint8_t seq, const struct ra
 	raft_hdr(d, seq, 0);
 	d[1] = r->term;
 	d[2] = r->leader;
+	d[3] = r->client;
 }
 
 static inline void raft_unpack_redirect(const uint8_t d[8], struct raft_redirect *r)
 {
 	r->term = d[1];
 	r->leader = d[2];
+	r->client = d[3];
 }
 
 #endif /* RAFT_MSG_H */

@@ -42,7 +42,6 @@ struct raft_port {
 
 	/* optional, can be NULL */
 	void (*entry_committed)(void *ctx, uint16_t index, uint8_t term, uint8_t entry, bool replayed);
-	void (*fill_ref)(void *ctx, uint8_t d[8]); /* time sync fills in REF bytes 4-7 */
 	void (*save_state)(void *ctx, uint8_t term, uint8_t voted_for);
 	void (*log)(void *ctx, const char *line); /* debug prints, no newline at the end */
 };
@@ -81,6 +80,8 @@ struct raft_node {
 	uint8_t voted_for; /* 0 = nobody */
 	uint8_t leader;    /* 0 = don't know */
 	bool heard_leader; /* no elections until this is true (default leader mode) */
+	bool peers_ready;  /* no-leader modes: no elections until raft_peers_ready() */
+	uint8_t leader_hint; /* from a REDIRECT, used when we don't know the leader */
 	uint8_t votes;     /* bit i set = node i voted for us */
 	uint64_t last_leader_us;
 	uint64_t deadline_us; /* election timeout */
@@ -129,6 +130,14 @@ void raft_tick(struct raft_node *n);
 
 /* Call for every CAN frame received on either bus. Non-raft frames are ignored. */
 void raft_receive_frame(struct raft_node *n, uint16_t id, const uint8_t d[8]);
+
+/*
+ * LEADER=none/random only. Call once every node has been heard from (or
+ * after a timeout). Elections don't start before this, so the nodes all start
+ * their election timers at about the same moment and the seed decides who
+ * wins, even though the Pi boots much later than the STM32s.
+ */
+void raft_peers_ready(struct raft_node *n);
 
 /*
  * Leader only. Adds an entry to the log and returns its index. Returns 0 if

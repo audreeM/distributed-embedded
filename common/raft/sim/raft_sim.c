@@ -1,16 +1,16 @@
 /*
- * Tests raft.c on a laptop. Fakes 3 nodes on 2 CAN buses and runs through
- * the checkoff scenarios (cutting wires, powering nodes off).
+ * Tests the Raft code on a laptop. Fakes 3 nodes on 2 CAN buses and runs
+ * through the checkoff scenarios (cutting wires, powering nodes off).
  *
  *   make && ./raft_sim            run every scenario
  *   ./raft_sim c5 -v              one scenario with debug prints
  *   ./raft_sim seeds              who wins the election for each seed
  *
- * relay_sim() and client_sim() are simple fake versions of what part C builds:
- *  - relay_sim: a node on both buses copies a raft frame to the other bus if
- *    the sender isn't on that bus and someone else is only on that bus.
- *  - client_sim: every 50 ms each node checks what it sees (with a 60-66 ms
- *    delay like HB_MON) against getNetwork() and reports anything different.
+ * Uses the real raft.c, raft_sm.c and raft_client.c (client + relay routing).
+ * The only fake parts are the buses and a mini heartbeat monitor: every node
+ * sends a heartbeat every 20 ms carrying its bus health (like lab 3's HB_Nx),
+ * and works out "bus degraded" / "node alive" from what it receives, the same
+ * way the boards' HB_MON does.
  */
 #include <stdarg.h>
 #include <stdint.h>
@@ -19,6 +19,7 @@
 #include <string.h>
 
 #include "raft.h"
+#include "raft_client.h"
 
 #define N      RAFT_N
 #define STEP   100  /* us of virtual time per loop */
@@ -26,11 +27,17 @@
 #define BUS_US 300  /* frame latency on the wire + receive path */
 #define QMAX   8192
 
+#define HB_ID(x)        (0x100 + (x) - 1) /* CAN_ID_HB_N1.. from can_catalog.h */
+#define HB_PERIOD_US    20000
+#define DEGRADED_US     50000 /* bus silent this long while the other works = degraded */
+#define HEALTH_FRESH_US 60000
+
 static uint64_t now;
 static int verbose;
 
 static struct raft_node nodes[N + 1];
 static struct raft_port ports[N + 1];
+static struct raft_client clients[N + 1];
 static struct raft_saved disk[N + 1];
 static const bool persists[N + 1] = {false, true, false, false}; /* only the Pi has a disk */
 static struct raft_opts opts;
@@ -39,12 +46,16 @@ static struct raft_opts opts;
 static bool alive[N + 1];
 static bool wire[N + 1][2];
 
-/* what HB_MON would see (delayed) */
-struct obs {
-	bool cur, seen;
-	uint64_t since;
+/* each node's heartbeat monitor */
+struct hbmon {
+	uint64_t boot;
+	uint64_t last_rx[2];        /* any frame from another node, per bus */
+	uint64_t last_hb[N + 1];    /* heartbeat from node x, any bus (relayed too) */
+	uint8_t health[N + 1];      /* last health byte from node x */
+	uint8_t hb_seq;
+	uint64_t next_hb;
 };
-static struct obs obs_link[N + 1][2], obs_node[N + 1];
+static struct hbmon mon[N + 1];
 
 struct frame {
 	uint64_t at;
@@ -54,7 +65,7 @@ struct frame {
 };
 static struct frame q[QMAX];
 static int qn;
-static unsigned long sent_by_msg[8];
+static unsigned long sent_by_msg[8], relayed;
 
 /* port functions */
 
@@ -115,6 +126,8 @@ static void port_commit(void *ctx, uint16_t idx, uint8_t term, uint8_t entry, bo
 static void boot(int i)
 {
 	alive[i] = true;
+	mon[i] = (struct hbmon){.boot = now, .next_hb = now + 1000 * (unsigned)i};
+	clients[i] = (struct raft_client){0};
 	ports[i] = (struct raft_port){
 		.ctx = (void *)(intptr_t)i,
 		.now_us = port_now,
@@ -126,79 +139,87 @@ static void boot(int i)
 	raft_init(&nodes[i], (uint8_t)i, &ports[i], &opts, persists[i] ? &disk[i] : NULL);
 }
 
-/* fake relay and client */
+/* the mini HB_MON */
 
-static void relay_sim(int r, const struct frame *f)
+static bool quiet(const struct hbmon *m, int bus, uint64_t limit)
 {
-	struct net_state net;
-	uint8_t s;
-	int other = !f->bus;
+	uint64_t last = m->last_rx[bus] ? m->last_rx[bus] : m->boot;
 
-	if ((f->d[0] & RAFT_FLAG_RELAYED) || !wire[r][0] || !wire[r][1] ||
-	    raft_msg_from_id(f->id, &s) == RAFT_MSG_NONE || s == r) {
-		return;
+	return now - last >= limit;
+}
+
+static uint8_t own_health(int j)
+{
+	const struct hbmon *m = &mon[j];
+	bool qa = quiet(m, 0, DEGRADED_US), qb = quiet(m, 1, DEGRADED_US);
+
+	return (uint8_t)((qa && !qb ? RAFT_HEALTH_BIT(0) : 0) | (qb && !qa ? RAFT_HEALTH_BIT(1) : 0));
+}
+
+static void build_obs(int j, struct raft_obs *o)
+{
+	const struct hbmon *m = &mon[j];
+
+	*o = (struct raft_obs){0};
+	o->heard_anyone = !quiet(m, 0, DEGRADED_US) || !quiet(m, 1, DEGRADED_US);
+	for (int x = 1; x <= N; x++) {
+		if (x == j) {
+			o->alive[x] = true;
+			o->health_fresh[x] = true;
+			o->health[x] = own_health(j);
+			continue;
+		}
+		o->alive[x] = m->last_hb[x] && now - m->last_hb[x] < RAFT_NODE_DOWN_MS * 1000u;
+		o->health_fresh[x] = m->last_hb[x] && now - m->last_hb[x] < HEALTH_FRESH_US;
+		o->health[x] = m->health[x];
 	}
-	getNetwork(&nodes[r], &net);
-	if (net.link_up[s][other]) {
-		return; /* sender is already on that bus */
+}
+
+static void send_hb(int j)
+{
+	uint8_t d[8] = {mon[j].hb_seq++ & 0x0F, 1, own_health(j)};
+
+	enqueue(j, 0, HB_ID(j), d);
+	enqueue(j, 1, HB_ID(j), d);
+}
+
+/* a node received a frame: HB_MON, raft, and maybe relay it */
+static void receive(int j, const struct frame *f)
+{
+	struct hbmon *m = &mon[j];
+	uint8_t sender = 0;
+	bool is_raft = raft_msg_from_id(f->id, &sender) != RAFT_MSG_NONE;
+
+	m->last_rx[f->bus] = now;
+	if (f->id >= HB_ID(1) && f->id <= HB_ID(N)) {
+		sender = (uint8_t)(f->id - HB_ID(1) + 1);
+		m->last_hb[sender] = now;
+		m->health[sender] = f->d[2];
 	}
-	for (int y = 1; y <= N; y++) {
-		if (y != s && y != r && net.node_up[y] && net.link_up[y][other] &&
-		    !net.link_up[y][f->bus]) {
+	if (is_raft) {
+		raft_receive_frame(&nodes[j], f->id, f->d);
+	}
+
+	/* relay: raft frames already relayed once are never relayed again */
+	if (sender != 0 && !(is_raft && (f->d[0] & RAFT_FLAG_RELAYED))) {
+		struct net_state committed, eff;
+		struct raft_obs o;
+		int to;
+
+		getNetwork(&nodes[j], &committed);
+		build_obs(j, &o);
+		route_effective_net(&committed, &o, (uint8_t)j, &eff);
+		to = route_relay_bus(&eff, (uint8_t)j, sender, f->bus);
+		if (to >= 0) {
 			uint8_t d[8];
 
 			memcpy(d, f->d, 8);
-			d[0] |= RAFT_FLAG_RELAYED;
-			enqueue(r, other, f->id, d);
-			return;
-		}
-	}
-}
-
-static void observe(struct obs *o, bool truth, uint64_t debounce)
-{
-	if (truth != o->cur) {
-		o->cur = truth;
-		o->since = now;
-	}
-	if (now - o->since >= debounce) {
-		o->seen = o->cur;
-	}
-}
-
-static void update_observations(void)
-{
-	for (int x = 1; x <= N; x++) {
-		for (int b = 0; b < 2; b++) {
-			observe(&obs_link[x][b], alive[x] && wire[x][b], 60000);
-		}
-		observe(&obs_node[x], alive[x] && (wire[x][0] || wire[x][1]), 66000);
-	}
-}
-
-static void client_sim(int j)
-{
-	struct net_state net;
-
-	getNetwork(&nodes[j], &net);
-	for (int x = 1; x <= N; x++) {
-		if (obs_node[x].seen != net.node_up[x] && (x != j || obs_node[x].seen)) {
-			raft_report_change(&nodes[j], raft_e_node((uint8_t)x, obs_node[x].seen));
-			continue; /* links follow once the node entry commits */
-		}
-		if (!net.node_up[x]) {
-			continue;
-		}
-		for (int b = 0; b < 2; b++) {
-			if (obs_link[x][b].seen != net.link_up[x][b]) {
-				raft_report_change(&nodes[j], raft_e_link((uint8_t)x, (uint8_t)b,
-									obs_link[x][b].seen));
+			if (is_raft) {
+				d[0] |= RAFT_FLAG_RELAYED;
 			}
+			relayed++;
+			enqueue(j, to, f->id, d);
 		}
-	}
-	if (obs_node[RAFT_NODE_COCKPIT].seen != net.cockpit_ok) {
-		raft_report_change(&nodes[j], obs_node[RAFT_NODE_COCKPIT].seen ? RAFT_E_COCKPIT_OK
-									     : RAFT_E_COCKPIT_ERROR);
 	}
 }
 
@@ -217,8 +238,7 @@ static void deliver(void)
 		}
 		for (int j = 1; j <= N; j++) {
 			if (j != f.from && alive[j] && wire[j][f.bus]) {
-				raft_receive_frame(&nodes[j], f.id, f.d);
-				relay_sim(j, &f);
+				receive(j, &f);
 			}
 		}
 	}
@@ -230,19 +250,27 @@ static void run_until(uint64_t t_ms)
 {
 	while (now < t_ms * 1000) {
 		now += STEP;
-		update_observations();
 		deliver();
-		if (now % TICK == 0) {
-			for (int i = 1; i <= N; i++) {
-				if (alive[i]) {
-					raft_tick(&nodes[i]);
-				}
+		for (int i = 1; i <= N; i++) {
+			if (!alive[i]) {
+				continue;
 			}
-		}
-		if (now % 50000 == 0) {
-			for (int i = 1; i <= N; i++) {
-				if (alive[i]) {
-					client_sim(i);
+			if (now >= mon[i].next_hb) {
+				mon[i].next_hb += HB_PERIOD_US;
+				send_hb(i);
+			}
+			if (now % TICK == 0) {
+				struct raft_obs o;
+				bool all = true;
+
+				raft_tick(&nodes[i]);
+				build_obs(i, &o);
+				raft_client_update(&clients[i], &nodes[i], &o, now);
+				for (int x = 1; x <= N; x++) {
+					all &= o.alive[x];
+				}
+				if (all) {
+					raft_peers_ready(&nodes[i]);
 				}
 			}
 		}
@@ -268,41 +296,44 @@ struct scenario {
 	int expect_term;   /* -1 = don't check */
 	int expect_leader; /* 0 = any, -1 = any STM32 */
 	bool expect_no_vote;
+	int expect_links;  /* number of CANLINK entries, -1 = don't check */
+	bool no_node_entries; /* link faults only: nobody should be reported down */
 };
 
 static const struct scenario scenarios[] = {
 	{"s1", "Demo 1: link failure, default mode (no predefined leader)", RAFT_LEADER_RANDOM, 2000,
-	 {{1000, CUT, 2, RAFT_BUS_A}}, 1, -1, 0, false},
+	 {{1000, CUT, 2, RAFT_BUS_A}}, 1, -1, 0, false, 1, true},
 	{"s2", "Demo 2: link failure and recovery, leader setup mode", RAFT_NODE_COCKPIT, 2500,
-	 {{500, CUT, 3, RAFT_BUS_A}, {1500, FIX, 3, RAFT_BUS_A}}, 2, 1, 1, true},
+	 {{500, CUT, 3, RAFT_BUS_A}, {1500, FIX, 3, RAFT_BUS_A}}, 2, 1, 1, true, 2, true},
 	{"s3", "Demo 3: leader failure, leader setup mode", RAFT_NODE_COCKPIT, 2000,
-	 {{500, KILL, 1, 0}}, 1, 2, -1, false},
+	 {{500, KILL, 1, 0}}, 1, 2, -1, false, -1, false},
 	{"c4", "Checkoff 4: N2 off A, restore, then off B, restore (no election)", RAFT_NODE_COCKPIT, 3000,
 	 {{500, CUT, 2, RAFT_BUS_A}, {1500, FIX, 2, RAFT_BUS_A}, {1600, CUT, 2, RAFT_BUS_B},
-	  {2500, FIX, 2, RAFT_BUS_B}}, 4, 1, 1, true},
+	  {2500, FIX, 2, RAFT_BUS_B}}, 4, 1, 1, true, 4, true},
 	{"c5", "Checkoff 5: N1 off B, N3 off A (relay through N2, term unchanged)", RAFT_NODE_COCKPIT,
-	 2500, {{500, CUT, 1, RAFT_BUS_B}, {1000, CUT, 3, RAFT_BUS_A}}, 2, 1, 1, false},
+	 2500, {{500, CUT, 1, RAFT_BUS_B}, {1000, CUT, 3, RAFT_BUS_A}}, 2, 1, 1, false, 2, true},
 	{"c67", "Checkoff 6-7: Pi down, STM32 leads, Pi back as follower", RAFT_NODE_COCKPIT, 3500,
-	 {{500, KILL, 1, 0}, {1500, BOOT, 1, 0}}, 2, 2, -1, false},
+	 {{500, KILL, 1, 0}, {1500, BOOT, 1, 0}}, 2, 2, -1, false, -1, false},
+	{"c9", "Checkoff 9: N2 leads, N2 off A, N3 off B (relay through the Pi)", RAFT_NODE_STEERING,
+	 2500, {{500, CUT, 2, RAFT_BUS_A}, {1000, CUT, 3, RAFT_BUS_B}}, 2, 1, 2, false, 2, true},
 	{"c10", "Checkoff 10: isolate follower N3, restore (term unchanged)", RAFT_NODE_COCKPIT, 2500,
 	 {{500, CUT, 3, RAFT_BUS_A}, {500, CUT, 3, RAFT_BUS_B}, {1500, FIX, 3, RAFT_BUS_A},
-	  {1500, FIX, 3, RAFT_BUS_B}}, 4, 1, 1, false},
+	  {1500, FIX, 3, RAFT_BUS_B}}, 4, 1, 1, false, -1, false},
 	{"c10L", "Checkoff 10: isolate leader N1, restore (term changes once)", RAFT_NODE_COCKPIT, 2500,
 	 {{500, CUT, 1, RAFT_BUS_A}, {500, CUT, 1, RAFT_BUS_B}, {1500, FIX, 1, RAFT_BUS_A},
-	  {1500, FIX, 1, RAFT_BUS_B}}, 4, 2, -1, false},
+	  {1500, FIX, 1, RAFT_BUS_B}}, 4, 2, -1, false, -1, false},
 };
 
 static void reset(uint8_t leader_mode, uint32_t seed)
 {
 	now = 0;
 	qn = 0;
+	relayed = 0;
 	memset(sent_by_msg, 0, sizeof(sent_by_msg));
 	memset(disk, 0, sizeof(disk));
 	opts = (struct raft_opts){.default_leader = leader_mode, .seed = seed};
 	for (int i = 1; i <= N; i++) {
 		wire[i][0] = wire[i][1] = true;
-		obs_link[i][0] = obs_link[i][1] = (struct obs){true, true, 0};
-		obs_node[i] = (struct obs){true, true, 0};
 	}
 	for (int i = 1; i <= N; i++) {
 		boot(i);
@@ -344,6 +375,35 @@ static bool logs_agree(void)
 	return true;
 }
 
+/* all live nodes' getNetwork() should match the real wiring */
+static bool network_matches_wires(void)
+{
+	for (int i = 1; i <= N; i++) {
+		struct net_state ns;
+
+		if (!alive[i]) {
+			continue;
+		}
+		getNetwork(&nodes[i], &ns);
+		for (int x = 1; x <= N; x++) {
+			bool up = alive[x] && (wire[x][0] || wire[x][1]);
+
+			if (ns.node_up[x] != up) {
+				printf("  N%d thinks N%d is %s\n", i, x, ns.node_up[x] ? "up" : "down");
+				return false;
+			}
+			for (int b = 0; up && b < 2; b++) {
+				if (ns.link_up[x][b] != wire[x][b]) {
+					printf("  N%d thinks N%d bus %c is %s\n", i, x, 'A' + b,
+					       ns.link_up[x][b] ? "up" : "down");
+					return false;
+				}
+			}
+		}
+	}
+	return true;
+}
+
 static void dump(void)
 {
 	char s[24], net[96];
@@ -373,6 +433,21 @@ static void dump(void)
 	}
 }
 
+static int count_entries(enum raft_ekind kind)
+{
+	int c = 0;
+
+	for (int i = 1; i <= N; i++) {
+		if (alive[i]) {
+			for (uint16_t k = 1; k <= nodes[i].commit_index; k++) {
+				c += raft_entry_decode(nodes[i].log[k].entry).kind == kind;
+			}
+			return c;
+		}
+	}
+	return 0;
+}
+
 static bool run_scenario(const struct scenario *sc)
 {
 	int who = 0, leaders;
@@ -380,7 +455,7 @@ static bool run_scenario(const struct scenario *sc)
 	uint8_t term = 0;
 
 	printf("\n=== %s: %s\n", sc->name, sc->what);
-	reset(sc->leader_mode, 1);
+	reset(sc->leader_mode, 4); /* seed 4: an STM32 wins under LEADER=random */
 	for (int k = 0; k < sc->nsteps; k++) {
 		const struct step *st = &sc->steps[k];
 		static const char *names[] = {"cut", "fix", "power off", "power on"};
@@ -414,6 +489,10 @@ static bool run_scenario(const struct scenario *sc)
 		printf("  FAIL: logs disagree\n");
 		ok = false;
 	}
+	if (!network_matches_wires()) {
+		printf("  FAIL: getNetwork() doesn't match the wiring\n");
+		ok = false;
+	}
 	if (sc->expect_term >= 0 && term != sc->expect_term) {
 		printf("  FAIL: term %u, expected %d\n", term, sc->expect_term);
 		ok = false;
@@ -430,17 +509,27 @@ static bool run_scenario(const struct scenario *sc)
 		printf("  FAIL: %lu REQ_VOTE frames\n", sent_by_msg[RAFT_MSG_REQ_VOTE]);
 		ok = false;
 	}
-	printf("  frames: REF %lu, APPEND %lu, ACK %lu, REQ_VOTE %lu, VOTE %lu, EVENT %lu\n",
+	if (sc->expect_links >= 0 && count_entries(RAFT_EK_LINK) != sc->expect_links) {
+		printf("  FAIL: %d CANLINK entries, expected %d\n", count_entries(RAFT_EK_LINK),
+		       sc->expect_links);
+		ok = false;
+	}
+	if (sc->no_node_entries && count_entries(RAFT_EK_NODE) != 0) {
+		printf("  FAIL: a node was reported down, but only links were cut\n");
+		ok = false;
+	}
+	printf("  frames: REF %lu, APPEND %lu, ACK %lu, REQ_VOTE %lu, VOTE %lu, EVENT %lu, REDIRECT %lu, relayed %lu\n",
 	       sent_by_msg[RAFT_MSG_REF], sent_by_msg[RAFT_MSG_APPEND],
 	       sent_by_msg[RAFT_MSG_APPEND_ACK], sent_by_msg[RAFT_MSG_REQ_VOTE],
-	       sent_by_msg[RAFT_MSG_VOTE], sent_by_msg[RAFT_MSG_EVENT]);
+	       sent_by_msg[RAFT_MSG_VOTE], sent_by_msg[RAFT_MSG_EVENT], sent_by_msg[RAFT_MSG_REDIRECT],
+	       relayed);
 	printf("  %s\n", ok ? "PASS" : "FAIL");
 	return ok;
 }
 
 static void seed_table(void)
 {
-	printf("LEADER=random: winner per seed (all nodes boot together)\n");
+	printf("LEADER=random: winner per seed (elections start once each node hears the others)\n");
 	for (uint32_t seed = 1; seed <= 20; seed++) {
 		int who = 0;
 
@@ -476,7 +565,7 @@ int main(int argc, char **argv)
 		failed += !run_scenario(&scenarios[i]);
 	}
 	if (ran == 0) {
-		fprintf(stderr, "unknown scenario %s\n", only);
+		fprintf(stderr, "unknown scenario %s (try s1 s2 s3 c4 c5 c67 c9 c10 c10L seeds)\n", only);
 		return 2;
 	}
 	printf("\n%d/%d scenarios passed\n", ran - failed, ran);
